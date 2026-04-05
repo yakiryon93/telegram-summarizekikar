@@ -1,0 +1,32 @@
+name: Daily Telegram Summary
+
+on:
+  schedule:
+    - cron: '0 9 * * *'  # 12:00 Israel time (UTC+3)
+  workflow_dispatch:  # allows manual trigger
+
+jobs:
+  summarize:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Restore Telegram session
+        run: echo "${{ secrets.TG_SESSION }}" | base64 -d > session.session
+
+      - name: Run summarizer
+        env:
+          TG_API_ID: ${{ secrets.TG_API_ID }}
+          TG_API_HASH: ${{ secrets.TG_API_HASH }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CHANNEL: "@kikarhashuk"
+        run: python summarizer.py
