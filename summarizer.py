@@ -9,7 +9,7 @@ load_dotenv()
 
 API_ID = int(os.getenv('TG_API_ID'))
 API_HASH = os.getenv('TG_API_HASH')
-ANTHROPIC_API_KEY = os.getenv('ANTHROPIC_API_KEY')
+ANTHROPIC_API_KEY = os.getenv('ANTHROPIC_API_KEY', '').strip()
 CHANNEL = os.getenv('CHANNEL', '@kikarhashuk')
 
 
