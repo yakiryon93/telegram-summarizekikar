@@ -61,7 +61,7 @@ async def main():
         summary = summarize(messages)
         msg = f'📊 סיכום יומי - כיכר השוק\n🗓 {today}\n\n{summary}'
         await client.send_message('me', msg)
-        await client.send_message('dfg', msg)
+        await client.send_message('+972504501509', msg)
         print('Summary sent!')
 
 
