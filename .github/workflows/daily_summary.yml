@@ -2,7 +2,7 @@ name: Daily Telegram Summary
 
 on:
   schedule:
-    - cron: '0 9 * * *'  # 12:00 Israel time (UTC+3)
+    - cron: '0 18 * * *'  # 21:00 Israel time (UTC+3)
   workflow_dispatch:  # allows manual trigger
 
 jobs:
