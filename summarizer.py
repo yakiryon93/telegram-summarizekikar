@@ -59,8 +59,10 @@ async def main():
             return
 
         summary = summarize(messages)
-        await client.send_message('me', f'📊 סיכום יומי - כיכר השוק\n🗓 {today}\n\n{summary}')
-        print('Summary sent to Saved Messages!')
+        msg = f'📊 סיכום יומי - כיכר השוק\n🗓 {today}\n\n{summary}'
+        await client.send_message('me', msg)
+        await client.send_message('dfg', msg)
+        print('Summary sent!')
 
 
 if __name__ == '__main__':
