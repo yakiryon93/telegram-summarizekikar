@@ -1,0 +1,25 @@
+name: Keepalive
+
+# Resets GitHub's 60-day inactivity timer so the scheduled
+# Daily Telegram Summary workflow is never auto-disabled.
+on:
+  schedule:
+    - cron: '0 5 */10 * *'  # every 10 days
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Touch keepalive marker and commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          date -u +"%Y-%m-%dT%H:%M:%SZ" > .keepalive
+          git add .keepalive
+          git commit -m "chore: keepalive [skip ci]" || exit 0
+          git push
