@@ -73,14 +73,16 @@ async def main():
 
         today = datetime.now().strftime('%d/%m/%Y')
 
+        # Single recipient: Kobi only (user reads it there). No copy to Saved Messages.
+        KOBI = '+972504501509'
+
         if not messages:
-            await client.send_message('me', f'📭 סיכום יומי {today} - לא נמצאו הודעות ב-24 השעות האחרונות.')
+            await client.send_message(KOBI, f'📭 תובנות יומיות {today} - לא נמצאו הודעות ב-24 השעות האחרונות.')
             return
 
         summary = summarize(messages)
         msg = f'🧠 תובנות יומיות - כיכר השוק\n🗓 {today}\n\n{summary}'
-        await client.send_message('me', msg)
-        await client.send_message('+972504501509', msg)
+        await client.send_message(KOBI, msg)
         print('Summary sent!')
 
 
