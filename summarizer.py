@@ -2,6 +2,7 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 import anthropic
 from telethon import TelegramClient
+from telethon.sessions import StringSession
 import os
 from dotenv import load_dotenv
 
@@ -11,6 +12,14 @@ API_ID = int(os.getenv('TG_API_ID'))
 API_HASH = os.getenv('TG_API_HASH')
 ANTHROPIC_API_KEY = os.getenv('ANTHROPIC_API_KEY', '').strip()
 CHANNEL = os.getenv('CHANNEL', '@kikarhashuk')
+# In CI we authenticate with a compact StringSession (secret); locally we fall
+# back to the on-disk 'session' file. GitHub secrets cap at 64KB, so the old
+# base64-of-session-file approach no longer fits — string session is ~350 chars.
+STRING_SESSION = os.getenv('TG_STRING_SESSION', '').strip()
+
+
+def make_session():
+    return StringSession(STRING_SESSION) if STRING_SESSION else 'session'
 
 
 def summarize(messages):
@@ -48,7 +57,7 @@ def summarize(messages):
 
 
 async def main():
-    async with TelegramClient('session', API_ID, API_HASH) as client:
+    async with TelegramClient(make_session(), API_ID, API_HASH) as client:
         print(f'[{datetime.now()}] Fetching messages...')
 
         since = datetime.now(timezone.utc) - timedelta(hours=24)

@@ -20,13 +20,11 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Restore Telegram session
-        run: echo "${{ secrets.TG_SESSION }}" | base64 -d > session.session
-
       - name: Run summarizer
         env:
           TG_API_ID: ${{ secrets.TG_API_ID }}
           TG_API_HASH: ${{ secrets.TG_API_HASH }}
+          TG_STRING_SESSION: ${{ secrets.TG_STRING_SESSION }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           CHANNEL: "@kikarhashuk"
         run: python summarizer.py
