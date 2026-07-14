@@ -31,7 +31,7 @@ def summarize(messages):
         max_tokens=1500,
         messages=[{
             'role': 'user',
-            'content': f"""אתה אנליסט פיננסי חד שמלווה משקיע פרטי. לפניך הודעות גולמיות מערוץ הטלגרם "כיכר השוק" (ערוץ השקעות/כלכלה) מ-24 השעות האחרונות.
+            'content': f"""אתה אנליסט פיננסי חד שמלווה משקיע פרטי. לפניך הודעות גולמיות מערוץ הטלגרם "כיכר השוק" (ערוץ השקעות/כלכלה) מ-7 הימים האחרונים.
 
 המשימה שלך היא לא לסכם ולא לחזור על מה שנכתב — אלא להפיק *תובנות*. ההבדל קריטי:
 - סיכום = "דיברו על מניית X ועל ריבית הפד" ❌
@@ -39,9 +39,9 @@ def summarize(messages):
 
 תן לי בעברית, חד וקצר:
 
-🎯 *השורה התחתונה* — משפט אחד: מה הדבר הכי חשוב שקרה היום בערוץ ולמה אכפת לי.
+🎯 *השורה התחתונה* — משפט אחד: מה הדבר הכי חשוב שקרה השבוע בערוץ ולמה אכפת לי.
 
-💡 *תובנות* (2-4 נקודות) — לכל אחת: מה זוהה, מה המשמעות/ההשלכה, ולמה זה לא טריוויאלי. חבר בין הודעות, זהה דפוסים, סתירות, או שינוי בסנטימנט. אם מישהו ממליץ על משהו — ציין מי, ומה האינטרס/האמינות אם ידוע.
+💡 *תובנות* (2-4 נקודות) — לכל אחת: מה זוהה, מה המשמעות/ההשלכה, ולמה זה לא טריוויאלי. חבר בין הודעות לאורך השבוע, זהה דפוסים, סתירות, או שינוי בסנטימנט. אם מישהו ממליץ על משהו — ציין מי, ומה האינטרס/האמינות אם ידוע.
 
 ⚠️ *על מה לשים לב / סיכונים* — דברים שנאמרו בחצי פה, הייפ חשוד, או מידע חסר שהייתי רוצה לבדוק לפני פעולה.
 
@@ -60,9 +60,9 @@ async def main():
     async with TelegramClient(make_session(), API_ID, API_HASH) as client:
         print(f'[{datetime.now()}] Fetching messages...')
 
-        since = datetime.now(timezone.utc) - timedelta(hours=24)
+        since = datetime.now(timezone.utc) - timedelta(days=7)
         messages = []
-        async for message in client.iter_messages(CHANNEL, limit=500):
+        async for message in client.iter_messages(CHANNEL, limit=2000):
             if message.date < since:
                 break
             if message.text and message.text.strip():
@@ -77,11 +77,11 @@ async def main():
         KOBI = '+972504501509'
 
         if not messages:
-            await client.send_message(KOBI, f'📭 תובנות יומיות {today} - לא נמצאו הודעות ב-24 השעות האחרונות.')
+            await client.send_message(KOBI, f'📭 תובנות שבועיות {today} - לא נמצאו הודעות בשבוע האחרון.')
             return
 
         summary = summarize(messages)
-        msg = f'🧠 תובנות יומיות - כיכר השוק\n🗓 {today}\n\n{summary}'
+        msg = f'🧠 תובנות שבועיות - כיכר השוק\n🗓 {today}\n\n{summary}'
         await client.send_message(KOBI, msg)
         print('Summary sent!')
 

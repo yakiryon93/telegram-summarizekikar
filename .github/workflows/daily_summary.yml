@@ -1,8 +1,8 @@
-name: Daily Telegram Summary
+name: Weekly Telegram Summary
 
 on:
   schedule:
-    - cron: '0 9 * * *'  # 12:00 Israel time in summer (IDT, UTC+3); 11:00 in winter (IST, UTC+2)
+    - cron: '0 9 * * 0'  # Sundays 12:00 Israel time in summer (IDT, UTC+3); 11:00 in winter (IST, UTC+2)
   workflow_dispatch:  # allows manual trigger
 
 jobs:
