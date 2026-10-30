@@ -32,6 +32,8 @@ PORTFOLIO_FILE = os.path.join(HERE, 'portfolio.json')
 STATE_FILE = os.path.join(HERE, 'brief_state.json')
 MODEL = 'claude-opus-4-8'  # same model as summarizer.py
 KOBI = '+972504501509'     # same recipient as summarizer.py
+ITZIK = '+972503121948'    # Itzik Nidam
+RECIPIENTS = [KOBI, ITZIK]
 
 START_CASH = 10_000.0
 POSITION_SIZE = 1_000.0
@@ -632,25 +634,64 @@ def write_json_file(path, data):
         f.write('\n')
 
 
-async def send(message):
-    from telethon import TelegramClient
+async def send(message, recipients):
+    """Sends to each recipient; one failure doesn't stop the others.
+    Returns {recipient: None | error}."""
+    from telethon import TelegramClient, functions, types
     from telethon.sessions import StringSession
     session = os.getenv('TG_STRING_SESSION', '').strip()
+    results = {}
     async with TelegramClient(StringSession(session) if session else 'session',
                               int(os.getenv('TG_API_ID')), os.getenv('TG_API_HASH')) as client:
-        await client.send_message(KOBI, message)
+        for to in recipients:
+            try:
+                try:
+                    await client.send_message(to, message)
+                except ValueError:
+                    # A phone number resolves only once it's a contact of the sending account.
+                    await client(functions.contacts.ImportContactsRequest([
+                        types.InputPhoneContact(client_id=0, phone=to, first_name=to, last_name='')]))
+                    await client.send_message(to, message)
+                results[to] = None
+                print(f'Sent to {to}.')
+            except Exception as e:
+                results[to] = f'{type(e).__name__}: {e}'
+                print(f'FAILED to send to {to}: {results[to]}')
+    return results
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--test', action='store_true', help='print only: no send, nothing saved')
     ap.add_argument('--send-now', action='store_true', help='ignore the 09:00 check (still once a day)')
+    ap.add_argument('--resend-to', help="send today's brief again to one recipient only (portfolio not touched)")
     ap.add_argument('--now', help='override current time (ISO, Israel time) for testing')
     ap.add_argument('--no-llm', action='store_true')
     args = ap.parse_args()
 
     now = datetime.fromisoformat(args.now).replace(tzinfo=IL) if args.now else datetime.now(IL)
     state = read_json_file(STATE_FILE, {})
+    today = now.date().isoformat()
+
+    if args.resend_to:
+        message = state.get('last_message') if state.get('last_sent') == today else None
+        if not message:
+            if state.get('last_sent') != today:
+                print(f'No brief was sent today ({today}); nothing to resend.')
+                return 1
+            # Sent before last_message was stored: rebuild. If the portfolio started
+            # today, replay it from scratch so the buys match the original message.
+            pf = read_json_file(PORTFOLIO_FILE, None) or new_portfolio()
+            if pf.get('start_date') and pf.get('closed') == [] and \
+                    all(p['bought'] == pf['start_date'] for p in pf['positions']):
+                pf = new_portfolio()
+            message, _ = build_brief(now, pf, use_llm=not args.no_llm)
+        if args.test:
+            print(message)
+            print(f'\n--- test mode: would resend to {args.resend_to} ---')
+            return
+        results = asyncio.run(send(message, [args.resend_to]))
+        return 1 if results[args.resend_to] else None
 
     if not args.test:
         if now.weekday() >= 5:
@@ -659,7 +700,7 @@ def main():
         if not args.send_now and now.hour != 9:
             print(f'{now:%Y-%m-%d %H:%M} Israel — not 09:xx, not sending.')
             return
-        if state.get('last_sent') == now.date().isoformat():
+        if state.get('last_sent') == today:
             print(f'Already sent today ({state["last_sent"]}).')
             return
 
@@ -671,12 +712,18 @@ def main():
         print(f'\n--- test mode: not sent, nothing saved ({len(message)} chars) ---')
         return
 
-    asyncio.run(send(message))
+    results = asyncio.run(send(message, RECIPIENTS))
+    if all(results.values()):
+        print('Brief not sent to anyone.')
+        return 1
     print(f'Brief sent ({len(message)} chars).')
+    # Save once anyone got it, so a retry doesn't double-send or double-trade.
     if pf_changed:
         write_json_file(PORTFOLIO_FILE, pf)
-    state['last_sent'] = now.date().isoformat()
+    state['last_sent'] = today
+    state['last_message'] = message
     write_json_file(STATE_FILE, state)
+    return 1 if any(results.values()) else None
 
 
 if __name__ == '__main__':
