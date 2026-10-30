@@ -1,0 +1,70 @@
+name: Morning Brief
+
+on:
+  schedule:
+    # Target 09:00 Israel, Mon–Fri. Two crons cover both offsets:
+    # 06:00 UTC = 09:00 IDT (summer), 07:00 UTC = 09:00 IST (winter).
+    # morning_brief.py sends only when it is 09:xx in Israel, once a day.
+    - cron: '0 6 * * 1-5'
+    - cron: '0 7 * * 1-5'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'בדיקה = מדפיס ללוג בלי לשלוח · שליחה = שולח עכשיו (פעם ביום)'
+        type: choice
+        options:
+          - 'בדיקה'
+          - 'שליחה'
+        default: 'בדיקה'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: morning-brief
+  cancel-in-progress: false
+
+jobs:
+  brief:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run morning brief
+        env:
+          TG_API_ID: ${{ secrets.TG_API_ID }}
+          TG_API_HASH: ${{ secrets.TG_API_HASH }}
+          TG_STRING_SESSION: ${{ secrets.TG_STRING_SESSION }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          MODE: ${{ github.event.inputs.mode }}
+        run: |
+          if [ "$MODE" = "בדיקה" ]; then
+            python morning_brief.py --test
+          elif [ "$MODE" = "שליחה" ]; then
+            python morning_brief.py --send-now
+          else
+            python morning_brief.py
+          fi
+
+      - name: Commit portfolio and state
+        if: github.event.inputs.mode != 'בדיקה'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          for f in portfolio.json brief_state.json; do [ -f "$f" ] && git add "$f"; done
+          git diff --cached --quiet && exit 0
+          git commit -m "chore: morning brief portfolio $(TZ=Asia/Jerusalem date +%Y-%m-%d) [skip ci]"
+          for i in 1 2 3 4; do
+            git pull --rebase && git push && exit 0
+            sleep $((i * 5))
+          done
+          exit 1
