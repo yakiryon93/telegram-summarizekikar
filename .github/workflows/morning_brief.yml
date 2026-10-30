@@ -10,12 +10,17 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: 'בדיקה = מדפיס ללוג בלי לשלוח · שליחה = שולח עכשיו (פעם ביום)'
+        description: 'בדיקה = מדפיס ללוג בלי לשלוח · שליחה = שולח עכשיו לכולם (פעם ביום) · שליחה חוזרת = הבריף של היום לנמען אחד'
         type: choice
         options:
           - 'בדיקה'
           - 'שליחה'
+          - 'שליחה חוזרת'
         default: 'בדיקה'
+      to:
+        description: 'לשליחה חוזרת בלבד: מספר בפורמט +972... או @username'
+        type: string
+        required: false
 
 permissions:
   contents: write
@@ -46,8 +51,11 @@ jobs:
           TG_STRING_SESSION: ${{ secrets.TG_STRING_SESSION }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           MODE: ${{ github.event.inputs.mode }}
+          TO: ${{ github.event.inputs.to }}
         run: |
-          if [ "$MODE" = "בדיקה" ]; then
+          if [ "$MODE" = "שליחה חוזרת" ]; then
+            python morning_brief.py --resend-to "$TO"
+          elif [ "$MODE" = "בדיקה" ]; then
             python morning_brief.py --test
           elif [ "$MODE" = "שליחה" ]; then
             python morning_brief.py --send-now
@@ -56,7 +64,8 @@ jobs:
           fi
 
       - name: Commit portfolio and state
-        if: github.event.inputs.mode != 'בדיקה'
+        # !cancelled(): still save if one recipient failed but another got it
+        if: ${{ !cancelled() && github.event.inputs.mode != 'בדיקה' && github.event.inputs.mode != 'שליחה חוזרת' }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
