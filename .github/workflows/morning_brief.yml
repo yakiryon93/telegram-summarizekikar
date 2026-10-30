@@ -21,6 +21,10 @@ on:
         description: 'לשליחה חוזרת בלבד: מספר בפורמט +972... או @username'
         type: string
         required: false
+      fresh:
+        description: 'לשליחה חוזרת בלבד: לבנות את ההודעה מחדש (במקום לשלוח את הנוסח השמור)'
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -52,9 +56,14 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           MODE: ${{ github.event.inputs.mode }}
           TO: ${{ github.event.inputs.to }}
+          FRESH: ${{ github.event.inputs.fresh }}
         run: |
           if [ "$MODE" = "שליחה חוזרת" ]; then
-            python morning_brief.py --resend-to "$TO"
+            if [ "$FRESH" = "true" ]; then
+              python morning_brief.py --resend-to "$TO" --fresh
+            else
+              python morning_brief.py --resend-to "$TO"
+            fi
           elif [ "$MODE" = "בדיקה" ]; then
             python morning_brief.py --test
           elif [ "$MODE" = "שליחה" ]; then
