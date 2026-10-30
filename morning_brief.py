@@ -92,6 +92,8 @@ def company_name(sym, name=''):
     while n and n != prev:
         prev = n
         n = NAME_SUFFIXES.sub('', n).strip(' ,')
+    if n.isupper() and len(n) > 4:
+        n = n.title()  # 'TRUIST FINANCIAL' -> 'Truist Financial'
     return n or sym
 
 
@@ -412,6 +414,42 @@ def picks_section(picks, today):
     return lines
 
 
+def money_short(x):
+    if x >= 1e6:
+        return f'${x / 1e6:.1f}M'
+    if x >= 1e3:
+        return f'${x / 1e3:.0f}K'
+    return f'${x:,.0f}'
+
+
+def insider_section(ins, today):
+    lines = ['🕵️ **רכישות פנים**']
+    if not isinstance(ins, dict) or not ins.get('day'):
+        return lines + ['⚠️ קובץ רכישות הפנים לא נטען — החלק דולג.']
+    if date.fromisoformat(ins['day']) < today - timedelta(days=4):
+        return lines + [f"⚠️ רכישות הפנים ישנות (דיווחי {short_date(ins['day'])}) — החלק דולג."]
+    lines[0] += f" (דיווחי {short_date(ins['day'])})"
+    sm = ins.get('summary') or {}
+    if not sm.get('n'):
+        return lines + ['לא דווחו רכישות של אנשי פנים.']
+    parts = [f"{sm['n']} רכישות"]
+    if sm.get('total'):
+        parts[0] += f" בסך {money_short(sm['total'])}"
+    if sm.get('ceo'):
+        parts.append(f"{sm['ceo']} מנכ\"לים" if sm['ceo'] > 1 else 'מנכ"ל אחד')
+    if sm.get('clusters'):
+        parts.append(f"אשכול: {', '.join(sm.get('clusterWho') or [])}")
+    lines.append(' · '.join(parts))
+    cos = {r.get('t'): r.get('co') for r in ins.get('rows') or []}
+    for h in (ins.get('highlights') or [])[:3]:
+        name = company_name(h['t'], cos.get(h['t']))
+        who = h['t'] if name == h['t'] else f"{name} ({h['t']})"
+        lines.append(f"• {who}: {h.get('txt', '')}")
+    if ins.get('siteHits'):
+        lines.append('✦ גם באתר (נבחרות/מועמדות/מומנטום): ' + ', '.join(ins['siteHits']))
+    return lines
+
+
 # ---------- section 6: virtual portfolio ----------
 
 def new_portfolio():
@@ -586,6 +624,7 @@ def build_brief(now, pf, use_llm=True):
     earnings, _ = load_json('earnings.json')
     picks, _ = load_json('picks.json')
     ledger, _ = load_json('picks_ledger.json')
+    insider, _ = load_json('insider_daily.json')
 
     spy = load_bars('SPY')
     last_session = None
@@ -600,6 +639,7 @@ def build_brief(now, pf, use_llm=True):
         earnings_section(earnings, today),
         econ_section(econ, now),
         picks_section(picks, today),
+        insider_section(insider, today),
     ]
 
     pf_changed = False
