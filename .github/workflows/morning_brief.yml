@@ -16,9 +16,14 @@ on:
           - 'בדיקה'
           - 'שליחה'
           - 'שליחה חוזרת'
+          - 'הודעה חופשית'
         default: 'בדיקה'
       to:
-        description: 'לשליחה חוזרת בלבד: מספר בפורמט +972... או @username'
+        description: 'לשליחה חוזרת / הודעה חופשית: מספר בפורמט +972... או @username (בהודעה חופשית ריק = קובי)'
+        type: string
+        required: false
+      text:
+        description: 'להודעה חופשית בלבד: הטקסט לשליחה'
         type: string
         required: false
 
@@ -52,8 +57,15 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           MODE: ${{ github.event.inputs.mode }}
           TO: ${{ github.event.inputs.to }}
+          CUSTOM_TEXT: ${{ github.event.inputs.text }}
         run: |
-          if [ "$MODE" = "שליחה חוזרת" ]; then
+          if [ "$MODE" = "הודעה חופשית" ]; then
+            if [ -n "$TO" ]; then
+              python morning_brief.py --custom --resend-to "$TO"
+            else
+              python morning_brief.py --custom
+            fi
+          elif [ "$MODE" = "שליחה חוזרת" ]; then
             python morning_brief.py --resend-to "$TO"
           elif [ "$MODE" = "בדיקה" ]; then
             python morning_brief.py --test
@@ -65,7 +77,7 @@ jobs:
 
       - name: Commit portfolio and state
         # !cancelled(): still save if one recipient failed but another got it
-        if: ${{ !cancelled() && github.event.inputs.mode != 'בדיקה' && github.event.inputs.mode != 'שליחה חוזרת' }}
+        if: ${{ !cancelled() && github.event.inputs.mode != 'בדיקה' && github.event.inputs.mode != 'שליחה חוזרת' && github.event.inputs.mode != 'הודעה חופשית' }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"

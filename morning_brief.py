@@ -705,6 +705,8 @@ def main():
     ap.add_argument('--test', action='store_true', help='print only: no send, nothing saved')
     ap.add_argument('--send-now', action='store_true', help='ignore the 09:00 check (still once a day)')
     ap.add_argument('--resend-to', help="send today's brief again to one recipient only (portfolio not touched)")
+    ap.add_argument('--custom', action='store_true',
+                    help='send the text in $CUSTOM_TEXT to --resend-to (default Kobi); no brief, no state change')
     ap.add_argument('--now', help='override current time (ISO, Israel time) for testing')
     ap.add_argument('--no-llm', action='store_true')
     args = ap.parse_args()
@@ -712,6 +714,19 @@ def main():
     now = datetime.fromisoformat(args.now).replace(tzinfo=IL) if args.now else datetime.now(IL)
     state = read_json_file(STATE_FILE, {})
     today = now.date().isoformat()
+
+    if args.custom:
+        text = os.getenv('CUSTOM_TEXT', '').strip()
+        if not text:
+            print('CUSTOM_TEXT is empty; nothing to send.')
+            return 1
+        to = args.resend_to or KOBI
+        if args.test:
+            print(text)
+            print(f'\n--- test mode: would send to {to} ---')
+            return
+        results = asyncio.run(send(text, [to]))
+        return 1 if results[to] else None
 
     if args.resend_to:
         message = state.get('last_message') if state.get('last_sent') == today else None
