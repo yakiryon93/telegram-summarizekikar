@@ -176,7 +176,7 @@ def numbers_in(text):
     return {n.replace(',', '') for n in NUM_RE.findall(text or '')}
 
 
-def llm_market_sentences(analysis, facts_text):
+def llm_market_sentences(analysis, facts_text, session_word='אתמול'):
     """2–3 Hebrew sentences from the daily analysis. Returns None on any failure
     or if the model wrote a number that is not in the source material."""
     key = os.getenv('ANTHROPIC_API_KEY', '').strip()
@@ -190,6 +190,8 @@ def llm_market_sentences(analysis, facts_text):
         'נתונים:',
         facts_text,
     ])
+    session_note = '' if session_word == 'אתמול' else \
+        f'- יום המסחר האחרון היה {session_word}, לא אתמול: אל תכתוב "אתמול".'
     try:
         import anthropic
         client = anthropic.Anthropic(api_key=key)
@@ -199,7 +201,8 @@ def llm_market_sentences(analysis, facts_text):
             messages=[{
                 'role': 'user',
                 'content': f"""אתה כותב את פסקת השוק בבריף בוקר בטלגרם למשקיע פרטי.
-כתוב 2 עד 3 משפטים קצרים בעברית: מה קרה אתמול בוול סטריט, איך נראים החוזים הבוקר, ומה המשמעות.
+כתוב 2 עד 3 משפטים קצרים בעברית: מה קרה {session_word} בוול סטריט (יום המסחר האחרון), איך נראים החוזים הבוקר, ומה המשמעות.
+{session_note}
 
 חוקים:
 - התבסס אך ורק על החומר שלמטה. אל תוסיף עובדות, שמות או אירועים שלא מופיעים בו.
@@ -214,6 +217,8 @@ def llm_market_sentences(analysis, facts_text):
     except Exception as e:
         print(f'LLM failed: {type(e).__name__}: {e}')
         return None
+    if session_word != 'אתמול':
+        text = text.replace('אתמול', session_word)
     invented = numbers_in(text) - numbers_in(source) - {'500'}
     if invented:
         print(f'LLM output rejected, numbers not in source: {invented}')
@@ -288,7 +293,10 @@ def market_section(analysis, market, last_session, now, use_llm=True):
 
     prose = None
     if ana_ok:
-        prose = llm_market_sentences(analysis, '\n'.join(facts)) if use_llm else None
+        session_word = 'אתמול'
+        if last_session and last_session != now.date() - timedelta(days=1):
+            session_word = f'ביום {DAY_NAMES[last_session.weekday()]}'
+        prose = llm_market_sentences(analysis, '\n'.join(facts), session_word) if use_llm else None
         if not prose:
             prose = analysis.get('headline') or analysis.get('tldr', '')
     if prose:
@@ -433,7 +441,7 @@ def insider_section(ins, today):
     sm = ins.get('summary') or {}
     if not sm.get('n'):
         return lines + ['לא דווחו רכישות של אנשי פנים.']
-    parts = [f"{sm['n']} רכישות"]
+    parts = ['רכישה אחת' if sm['n'] == 1 else f"{sm['n']} רכישות"]
     if sm.get('total'):
         parts[0] += f" בסך {money_short(sm['total'])}"
     if sm.get('ceo'):
@@ -594,7 +602,7 @@ def portfolio_section(pf, bought, sold, note=None):
         lines.append(f"• לא נקנו (אין מזומן או מקום): {', '.join(skipped)}")
     for s in sold:
         lines.append(f"• נמכרה {s['sym']} ב-${s['exit']:,.2f}: {pct(s['ret'], 1)} "
-                     f"({'+' if s['pnl'] >= 0 else '-'}{money(abs(s['pnl']))}) — {s['reason']}, אחרי {s['days']} ימים")
+                     f"({'+' if s['pnl'] >= 0 else '-'}{money(abs(s['pnl']))}) — {s['reason']}, " + ('אחרי יום אחד' if s['days'] == 1 else f"אחרי {s['days']} ימים"))
     if not bought and not sold:
         lines.append('• אין קניות או מכירות היום.')
     value = portfolio_value(pf)
