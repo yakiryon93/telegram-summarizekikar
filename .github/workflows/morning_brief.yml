@@ -2,11 +2,11 @@ name: Morning Brief
 
 on:
   schedule:
-    # Target 09:00 Israel, Mon–Fri. Two crons cover both offsets:
-    # 06:00 UTC = 09:00 IDT (summer), 07:00 UTC = 09:00 IST (winter).
-    # morning_brief.py sends only when it is 09:xx in Israel, once a day.
-    - cron: '0 6 * * 1-5'
-    - cron: '0 7 * * 1-5'
+    # Target 09:00 Israel, Mon–Fri. GitHub starts scheduled runs in this repo
+    # hours late (and :00 is the busiest minute), so several off-minute crons
+    # run between 06:07 and 12:37 UTC. morning_brief.py sends on the first run
+    # that lands between 09:00 and 16:00 Israel time, once a day.
+    - cron: '7,37 6-12 * * 1-5'
   workflow_dispatch:
     inputs:
       mode:
