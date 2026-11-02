@@ -459,6 +459,45 @@ def insider_section(ins, today):
     return lines
 
 
+CANDIDATES_SHOWN = 5
+
+
+def candidates_section(cands, picks, pf, earnings, today):
+    """Top candidates from the site's candidates list that we neither hold nor
+    already list as picks — ideas to check, not buys."""
+    lines = ['🔍 **מועמדות לכניסה** (לבדיקה, לא בתיק)']
+    if not isinstance(cands, dict) or not cands.get('candidates'):
+        return lines + ['⚠️ רשימת המועמדים לא נטענה — החלק דולג.']
+    if not cands.get('date') or date.fromisoformat(cands['date']) < today - timedelta(days=5):
+        return lines + [f"⚠️ רשימת המועמדים ישנה ({cands.get('date', '?')}) — החלק דולג."]
+    skip = {p['sym'] for p in (pf or {}).get('positions', [])}
+    if isinstance(picks, dict):
+        skip |= {p['sym'] for p in picks.get('picks') or []}
+    window = (earnings or {}).get('window') or {} if isinstance(earnings, dict) else {}
+    shown = 0
+    for c in sorted(cands['candidates'], key=lambda c: c.get('rank') or 999):
+        sym = c.get('symbol')
+        if not sym or sym in skip or not c.get('entry'):
+            continue
+        s = f"• {sym} · כניסה ${c['entry']:,.2f}"
+        if c.get('stop'):
+            s += f" · סטופ ${c['stop']:,.2f}"
+        if c.get('target'):
+            s += f" · יעד ${c['target']:,.2f}"
+            if c.get('tp_pct'):
+                s += f" ({pct(c['tp_pct'], 1)})"
+        rep_day = window.get(sym)
+        if rep_day and today.isoformat() <= rep_day <= (today + timedelta(days=7)).isoformat():
+            s += f" · ⚠️ מדווחת {short_date(rep_day)}"
+        lines.append(s)
+        shown += 1
+        if shown >= CANDIDATES_SHOWN:
+            break
+    if not shown:
+        lines.append('אין מועמדות חדשות מעבר למה שכבר בתיק ובנבחרות.')
+    return lines
+
+
 # ---------- section 6: virtual portfolio ----------
 
 def new_portfolio():
@@ -634,6 +673,7 @@ def build_brief(now, pf, use_llm=True):
     picks, _ = load_json('picks.json')
     ledger, _ = load_json('picks_ledger.json')
     insider, _ = load_json('insider_daily.json')
+    cands, _ = load_json('candidates.json')
 
     spy = load_bars('SPY')
     last_session = None
@@ -665,6 +705,7 @@ def build_brief(now, pf, use_llm=True):
         pf_changed = True
         sections.append(portfolio_section(pf, bought, sold, note))
 
+    sections.append(candidates_section(cands, picks, pf, earnings, today))
     sections.append(['nditzik.github.io/nidam-markets'])
     return '\n\n'.join('\n'.join(s) for s in sections), pf_changed
 
@@ -716,6 +757,7 @@ def main():
     ap.add_argument('--resend-to', help="send today's brief again to one recipient only (portfolio not touched)")
     ap.add_argument('--custom', action='store_true',
                     help='send the text in $CUSTOM_TEXT to --resend-to (default Kobi); no brief, no state change')
+    ap.add_argument('--fresh', action='store_true', help='with --resend-to: rebuild instead of resending the stored text')
     ap.add_argument('--now', help='override current time (ISO, Israel time) for testing')
     ap.add_argument('--no-llm', action='store_true')
     args = ap.parse_args()
@@ -738,7 +780,7 @@ def main():
         return 1 if results[to] else None
 
     if args.resend_to:
-        message = state.get('last_message') if state.get('last_sent') == today else None
+        message = state.get('last_message') if state.get('last_sent') == today and not args.fresh else None
         if not message:
             if state.get('last_sent') != today:
                 print(f'No brief was sent today ({today}); nothing to resend.')
