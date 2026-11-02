@@ -39,6 +39,7 @@ START_CASH = 10_000.0
 POSITION_SIZE = 1_000.0
 MAX_POSITIONS = 10
 MAX_HOLD_DAYS = 20
+SEND_UNTIL_HOUR = 16   # latest hour (Israel) a late scheduled run may still send
 
 DAY_NAMES = ['שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת', 'ראשון']
 
@@ -752,8 +753,10 @@ def main():
         if now.weekday() >= 5:
             print(f'{now:%Y-%m-%d %H:%M} Israel — weekend, not sending.')
             return
-        if not args.send_now and now.hour != 9:
-            print(f'{now:%Y-%m-%d %H:%M} Israel — not 09:xx, not sending.')
+        # GitHub runs scheduled jobs in this repo hours late, so a run any time
+        # from 09:00 until SEND_UNTIL_HOUR sends (still once a day).
+        if not args.send_now and not (9 <= now.hour < SEND_UNTIL_HOUR):
+            print(f'{now:%Y-%m-%d %H:%M} Israel — outside 09:00–{SEND_UNTIL_HOUR}:00, not sending.')
             return
         if state.get('last_sent') == today:
             print(f'Already sent today ({state["last_sent"]}).')
