@@ -710,6 +710,132 @@ def build_brief(now, pf, use_llm=True):
     return '\n\n'.join('\n'.join(s) for s in sections), pf_changed
 
 
+# ---------- afternoon brief (after the US open) ----------
+
+AFTERNOON_FROM = (17, 30)   # earliest Israel time a scheduled afternoon run sends
+AFTERNOON_UNTIL_HOUR = 21   # latest hour (Israel) a late scheduled run may still send
+MOVERS_SHOWN = 3
+
+
+def build_afternoon(now, pf):
+    """Short post-open update: indices, VIX, today's macro prints, reactions to
+    earnings, the day's biggest movers, and any of our names among them."""
+    today = now.date()
+    market, _ = load_json('market.json')
+    econ, _ = load_json('econ.json')
+    earnings, _ = load_json('earnings.json')
+    movers, _ = load_json('movers.json')
+    picks, _ = load_json('picks.json')
+    cands, _ = load_json('candidates.json')
+
+    head = [f'🔔 **הבריף של נידם · אחרי הפתיחה · יום {DAY_NAMES[today.weekday()]} {today:%d.%m.%Y}**']
+
+    # indices
+    sec = ['📈 **השוק עכשיו**']
+    items = {}
+    if isinstance(market, dict):
+        upd = parse_updated(market.get('_meta', {}))
+        if upd is not None and timedelta(0) <= now - upd <= timedelta(minutes=45):
+            items = {it['key']: it for it in market.get('items', [])}
+            head[0] += f' · {upd:%H:%M}'
+        else:
+            sec.append(f"⚠️ נתוני השוק לא עדכניים (עודכנו {market.get('_meta', {}).get('updatedAt', '?')}) — החלק דולג.")
+    else:
+        sec.append('⚠️ נתוני השוק לא נטענו — החלק דולג.')
+    if items:
+        idx = [f"{label} {pct(items[k].get('chg'))}" for k, label in
+               (('spy', 'S&P 500 (SPY)'), ('qqq', 'נאסד"ק 100 (QQQ)'), ('iwm', 'ראסל 2000 (IWM)')) if k in items]
+        if idx:
+            sec.append('• מאז הסגירה הקודמת: ' + ' · '.join(idx))
+        vix = items.get('vix')
+        vl = market.get('vixLight') or {}
+        if vix:
+            light = {'green': '🟢 ירוק', 'yellow': '🟡 צהוב', 'red': '🔴 אדום'}.get(vl.get('state'), '')
+            sec.append(f"• VIX {vix['price']:.1f} ({pct(vix.get('chg'), 1)})" + (f' · רמזור {light}' if light else ''))
+        rest = []
+        if 'tnx' in items:
+            rest.append(f"תשואת 10 שנים {items['tnx']['price']:.2f}%")
+        rest += [f"{label} {pct(items[k].get('chg'))}" for k, label in
+                 (('usdils', 'דולר/שקל'), ('brent', 'ברנט')) if k in items]
+        if rest:
+            sec.append('• ' + ' · '.join(rest))
+
+    # macro printed today
+    mac = []
+    if isinstance(econ, dict):
+        for e in econ.get('events') or []:
+            try:
+                t = datetime.fromisoformat(e['date']).replace(tzinfo=ZoneInfo('UTC')).astimezone(IL)
+            except Exception:
+                continue
+            if t.date() == today and t <= now:
+                s = f"• {t:%H:%M} {e.get('he', '')}: "
+                s += f"יצא {e['actual']}" if e.get('actual') else 'עוד אין נתון בפועל'
+                if e.get('forecast'):
+                    s += f" מול צפי {e['forecast']}"
+                s += {'good': ' ✅', 'bad': ' ❌', 'inline': ' (כצפוי)'}.get(e.get('surprise'), '')
+                mac.append(s)
+    macro = ['🏛 **מאקרו היום**'] + (mac or ['היום לא פורסמו נתונים מתוזמנים.'])
+
+    # earnings reactions today
+    reac = []
+    if isinstance(earnings, dict):
+        for d in (earnings.get('reactions') or {}).get('days') or []:
+            for it in d.get('items') or []:
+                if it.get('reactDate') == today.isoformat() and it.get('chg') is not None:
+                    reac.append(it)
+    reac.sort(key=lambda it: -abs(it['chg']))
+    rx = ['🏢 **התגובה לדוחות**']
+    if reac:
+        for it in reac[:6]:
+            name = company_name(it['ticker'], it.get('name'))
+            who = it['ticker'] if name == it['ticker'] else f"{name} ({it['ticker']})"
+            rx.append(f"• {who} {pct(it['chg'])}")
+    else:
+        rx.append('אין עדיין נתוני תגובה לדוחות של היום.')
+
+    # movers + our names among them
+    mv = ['🚀 **הבולטות היום**']
+    ours = {p['sym']: 'בתיק' for p in (pf or {}).get('positions', [])}
+    if isinstance(picks, dict):
+        for p in picks.get('picks') or []:
+            ours.setdefault(p['sym'], 'בנבחרות')
+    if isinstance(cands, dict):
+        for c in (cands.get('candidates') or [])[:CANDIDATES_SHOWN * 2]:
+            if c.get('symbol'):
+                ours.setdefault(c['symbol'], 'מועמדת')
+    if isinstance(movers, dict) and (movers.get('_meta') or {}).get('session') == 'regular':
+        g = movers.get('gainers') or []
+        l = movers.get('losers') or []
+        if g:
+            mv.append('• עולות: ' + ', '.join(f"{x['symbol']} {pct(x['chg'], 1)}" for x in g[:MOVERS_SHOWN]))
+        if l:
+            mv.append('• יורדות: ' + ', '.join(f"{x['symbol']} {pct(x['chg'], 1)}" for x in l[:MOVERS_SHOWN]))
+        hits = {}
+        for x in g + l + (movers.get('active') or []):
+            if x['symbol'] in ours:
+                hits[x['symbol']] = x
+        held = {p['sym']: p for p in (pf or {}).get('positions', [])}
+        for sym, x in hits.items():
+            line = f"✦ {sym} ({ours[sym]}) בין הבולטות: {pct(x['chg'], 1)}"
+            p = held.get(sym)
+            if p and x.get('price'):
+                line += f" · ${x['price']:,.2f}"
+                if p.get('stop'):
+                    gap = (x['price'] / p['stop'] - 1) * 100
+                    line += (f" · ⚠️ {gap:.1f}% מעל הסטופ (${p['stop']:,.2f})" if gap >= 0
+                             else f" · ⚠️ מתחת לסטופ (${p['stop']:,.2f}) — תימכר אם תיסגר כך")
+                if p.get('target') and x['price'] > p['target']:
+                    line += f" · 🎯 מעל היעד (${p['target']:,.2f})"
+            mv.append(line)
+    else:
+        mv.append('⚠️ רשימת הבולטות לא עדכנית — החלק דולג.')
+
+    note = ['מחירי המניות בתיק מתעדכנים רק אחרי הסגירה — המצב המלא בבריף של מחר ב-9:00.']
+    sections = [head, sec, macro, rx, mv, note, ['nditzik.github.io/nidam-markets']]
+    return '\n\n'.join('\n'.join(x) for x in sections)
+
+
 def read_json_file(path, default):
     try:
         with open(path, encoding='utf-8') as f:
@@ -757,6 +883,7 @@ def main():
     ap.add_argument('--resend-to', help="send today's brief again to one recipient only (portfolio not touched)")
     ap.add_argument('--custom', action='store_true',
                     help='send the text in $CUSTOM_TEXT to --resend-to (default Kobi); no brief, no state change')
+    ap.add_argument('--afternoon', action='store_true', help='the post-open brief instead of the morning one')
     ap.add_argument('--fresh', action='store_true', help='with --resend-to: rebuild instead of resending the stored text')
     ap.add_argument('--now', help='override current time (ISO, Israel time) for testing')
     ap.add_argument('--no-llm', action='store_true')
@@ -778,6 +905,33 @@ def main():
             return
         results = asyncio.run(send(text, [to]))
         return 1 if results[to] else None
+
+    if args.afternoon:
+        if not args.test:
+            if now.weekday() >= 5:
+                print(f'{now:%Y-%m-%d %H:%M} Israel — weekend, not sending.')
+                return
+            if not args.send_now and not ((now.hour, now.minute) >= AFTERNOON_FROM and now.hour < AFTERNOON_UNTIL_HOUR):
+                print(f'{now:%Y-%m-%d %H:%M} Israel — outside the afternoon window, not sending.')
+                return
+            if state.get('last_sent_afternoon') == today:
+                print(f'Afternoon brief already sent today ({today}).')
+                return
+        message = build_afternoon(now, read_json_file(PORTFOLIO_FILE, None))
+        if args.test:
+            print(message)
+            print(f'\n--- test mode: not sent, nothing saved ({len(message)} chars) ---')
+            return
+        results = asyncio.run(send(message, [args.resend_to] if args.resend_to else RECIPIENTS))
+        if all(results.values()):
+            print('Afternoon brief not sent to anyone.')
+            return 1
+        print(f'Afternoon brief sent ({len(message)} chars).')
+        if not args.resend_to:
+            state['last_sent_afternoon'] = today
+            state['last_message_afternoon'] = message
+            write_json_file(STATE_FILE, state)
+        return 1 if any(results.values()) else None
 
     if args.resend_to:
         message = state.get('last_message') if state.get('last_sent') == today and not args.fresh else None
