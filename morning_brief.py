@@ -404,7 +404,7 @@ def picks_section(picks, today):
     else:
         new = [p for p in items if not p.get('since')]
         old = [p for p in items if p.get('since')]
-        lines.append(f'{head}, {len(items)} מניות:')
+        lines.append(f'{head}, ' + ('מניה אחת:' if len(items) == 1 else f'{len(items)} מניות:'))
         if new:
             lines.append('• חדשות: ' + ', '.join(p['sym'] for p in new))
         if old:
@@ -683,7 +683,7 @@ def build_brief(now, pf, use_llm=True):
         last_session = prev_weekday(today)
 
     sections = [
-        [f'☀️ **בריף בוקר · יום {DAY_NAMES[today.weekday()]} {today:%d.%m.%Y}**'],
+        [f'☀️ **הבריף של נידם · יום {DAY_NAMES[today.weekday()]} {today:%d.%m.%Y}**'],
         market_section(analysis, market, last_session, now, use_llm),
         earnings_section(earnings, today),
         econ_section(econ, now),
