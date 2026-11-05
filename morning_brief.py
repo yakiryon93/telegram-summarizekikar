@@ -76,7 +76,9 @@ HE_NAMES = {
     'PLD': 'פרולוג\'יס', 'O': 'ריאלטי אינקם', 'LIN': 'לינדה', 'SPGI': 'S&P גלובל', 'ICE': 'ICE', 'CME': 'CME',
     'COIN': 'קוינבייס', 'HOOD': 'רובינהוד', 'MSTR': 'מייקרוסטרטג\'י', 'SMCI': 'סופר מיקרו', 'ON': 'און סמיקונדקטור',
     'MRVL': 'מארוול', 'CCJ': 'קמקו', 'KVUE': 'קנוויו', 'CHD': 'צ\'רץ\' אנד דוויט', 'ETN': 'איטון',
-    'MPC': 'מרתון פטרוליום', 'WMB': 'ויליאמס', 'FANG': 'דיימונדבק', 'CNI': 'הרכבת הקנדית', 'RYAAY': 'ריינאייר',
+    'MPC': 'מרתון פטרוליום', 'IT': 'גרטנר', 'GDRX': 'GoodRx', 'EMBJ': 'אמבראר', 'OMER': 'Omeros',
+    'PSX': 'פיליפס 66', 'PAYO': 'פיוניר', 'ADP': 'ADP', 'UNH': 'יונייטדהלת\'', 'DE': 'דיר', 'DXC': 'DXC',
+    'WMG': 'וורנר מיוזיק', 'FRO': 'פרונטליין', 'VLTO': 'ורלטו', 'NWSA': 'ניוז קורפ', 'WMB': 'ויליאמס', 'FANG': 'דיימונדבק', 'CNI': 'הרכבת הקנדית', 'RYAAY': 'ריינאייר',
 }
 
 NAME_SUFFIXES = re.compile(
@@ -551,6 +553,7 @@ def editions_from_sources(picks, ledger):
                     'entry': (p or {}).get('entry') or s.get('entry') or (p or {}).get('price'),
                     'stop': (p or {}).get('stop') or s.get('stop'),
                     'target': (p or {}).get('target'),
+                    'name': (p or {}).get('name') or '',
                 })
             eds.append({'date': e['date'], 'symbols': syms})
     elif isinstance(picks, dict) and picks.get('date'):
@@ -627,7 +630,7 @@ def run_portfolio(pf, editions, spy_days, upto=None):
                 if len(pf['positions']) >= MAX_POSITIONS or pf['cash'] < POSITION_SIZE - 1e-6:
                     bought.append({'sym': s['sym'], 'skipped': 'אין מזומן/מקום'})
                     continue
-                pos = {'sym': s['sym'], 'entry': s['entry'], 'stop': s.get('stop'), 'target': s.get('target'),
+                pos = {'sym': s['sym'], 'name': s.get('name') or '', 'entry': s['entry'], 'stop': s.get('stop'), 'target': s.get('target'),
                        'shares': POSITION_SIZE / s['entry'], 'cost': POSITION_SIZE, 'bought': day, 'edition': ed['date']}
                 pf['cash'] -= POSITION_SIZE
                 pf['positions'].append(pos)
@@ -802,9 +805,22 @@ def afternoon_why(now, market, items, reac, movers, pf, use_llm=True):
             facts.append(f"S&P מתחת לשיא 52 שבועות: {vl['spxOffHigh']}% · VIX {vl.get('vix')} · רמזור {vl.get('state')}")
     if reac:
         facts.append('תגובה לדוחות: ' + ', '.join(f"{r['ticker']} {r['chg']:+.2f}%" for r in reac[:6]))
-    held = [p['sym'] for p in (pf or {}).get('positions', [])]
+    held = [f"{p['sym']} ({company_name(p['sym'], p.get('name'))})" for p in (pf or {}).get('positions', [])]
     if held:
-        facts.append('המניות בתיק הווירטואלי שלנו: ' + ', '.join(held))
+        facts.append('המניות בתיק הווירטואלי שלנו (טיקר ושם החברה): ' + ', '.join(held))
+    econ, _ = load_json('econ.json')
+    if isinstance(econ, dict):
+        cal = []
+        for e in econ.get('events') or []:
+            try:
+                t = datetime.fromisoformat(e['date']).replace(tzinfo=ZoneInfo('UTC')).astimezone(IL)
+            except Exception:
+                continue
+            if now.date() <= t.date() <= now.date() + timedelta(days=7):
+                cal.append(f"יום {DAY_NAMES[t.weekday()]} {t.day}.{t.month} בשעה {t:%H:%M} (שעון ישראל): {e.get('he', '')}"
+                           + (f", צפי {e['forecast']}" if e.get('forecast') else ''))
+        if cal:
+            facts.append('יומן המאקרו הרשמי (השעות הנכונות):\n' + '\n'.join(cal[:8]))
     material = '\n'.join(facts) + '\n\n' + source
 
     text = None
@@ -822,6 +838,8 @@ def afternoon_why(now, market, items, reac, movers, pf, use_llm=True):
 - התבסס אך ורק על החומר שלמטה (מבזקים, תדריך, נתונים). אל תמציא סיבות, שמות, מספרים או ציטוטים. אם החומר לא מסביר משהו — אל תנחש.
 - כל מספר שאתה כותב חייב להופיע בחומר כפי שהוא.
 - ציין את מקור הטענה כשזה בית השקעות או בכיר (למשל "לפי UBS", "חברת הפד ...").
+- שעות ותאריכים של נתונים ואירועים — רק מ"יומן המאקרו הרשמי" שבחומר, גם אם מקור אחר כותב שעה אחרת.
+- אל תקשר טיקר לחברה אלא לפי השם שמופיע לצידו בחומר. המניות בתיק מופיעות עם שם החברה — השתמש רק בשם הזה.
 - ב"מה זה אומר" — הערכה זהירה ומעשית (חשיפה, סטופים, מה לעקוב), לא המלצה על מניה מסוימת. אם רלוונטי, ציין אם מניות מהתיק שלנו חשופות לסקטור שנפגע.
 - פורמט טלגרם: שורה "🔍 **למה זה קורה**", סעיפים ממוספרים, שורה ריקה, "🎯 **מה זה אומר**" ואחריה הטקסט. בלי כותרות נוספות, בלי הקדמה.
 - עד 1,600 תווים.
