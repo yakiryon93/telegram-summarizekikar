@@ -21,6 +21,7 @@ on:
           - 'שליחה חוזרת'
           - 'הודעה חופשית'
           - 'בריף אחרי הפתיחה'
+          - 'בדיקת בריף אחרי הפתיחה'
         default: 'בדיקה'
       to:
         description: 'לשליחה חוזרת / הודעה חופשית: מספר בפורמט +972... או @username (בהודעה חופשית ריק = קובי)'
@@ -71,6 +72,8 @@ jobs:
         run: |
           if [ "$SCHEDULE" = "7,37 15-17 * * 1-5" ]; then
             python morning_brief.py --afternoon
+          elif [ "$MODE" = "בדיקת בריף אחרי הפתיחה" ]; then
+            python morning_brief.py --afternoon --test
           elif [ "$MODE" = "בריף אחרי הפתיחה" ]; then
             python morning_brief.py --afternoon --send-now
           elif [ "$MODE" = "הודעה חופשית" ]; then
@@ -95,7 +98,7 @@ jobs:
 
       - name: Commit portfolio and state
         # !cancelled(): still save if one recipient failed but another got it
-        if: ${{ !cancelled() && github.event.inputs.mode != 'בדיקה' && github.event.inputs.mode != 'שליחה חוזרת' && github.event.inputs.mode != 'הודעה חופשית' }}
+        if: ${{ !cancelled() && github.event.inputs.mode != 'בדיקה' && github.event.inputs.mode != 'שליחה חוזרת' && github.event.inputs.mode != 'הודעה חופשית' && github.event.inputs.mode != 'בדיקת בריף אחרי הפתיחה' }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
