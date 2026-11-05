@@ -116,6 +116,26 @@ def load_json(name):
         return None, f'{type(e).__name__}'
 
 
+def load_site_text(path):
+    """A text file the site serves by its path from the site root (e.g.
+    'data/briefings/afternoon.html'), or None."""
+    try:
+        if DATA_DIR:
+            with open(os.path.join(os.path.dirname(DATA_DIR.rstrip('/')), path), encoding='utf-8') as f:
+                return f.read()
+        r = requests.get(f"{SITE_DATA.rsplit('/data', 1)[0]}/{path}", timeout=20)
+        return r.text if r.status_code == 200 else None
+    except Exception:
+        return None
+
+
+def html_to_text(html_text):
+    import html as html_lib
+    t = re.sub(r'<(script|style).*?</\1>', ' ', html_text or '', flags=re.S | re.I)
+    t = html_lib.unescape(re.sub(r'<[^>]+>', ' ', t))
+    return re.sub(r'\s+', ' ', t).strip()
+
+
 _bars_cache = {}
 
 
@@ -717,7 +737,124 @@ AFTERNOON_UNTIL_HOUR = 21   # latest hour (Israel) a late scheduled run may stil
 MOVERS_SHOWN = 3
 
 
-def build_afternoon(now, pf):
+BIG_MOVE_QQQ = 2.0   # |QQQ| % that makes a "big day": longer explanation
+BIG_MOVE_SPY = 1.5
+
+
+def afternoon_sources(now, movers):
+    """What the site knows about why the market moves today: the latest
+    breaking news, the afternoon investor briefing, the flash alert's evidence
+    and the big names' moves. Returns (source_text, fallback_lines)."""
+    parts, fallback = [], []
+    pulse, _ = load_json('pulse.json')
+    news = []
+    if isinstance(pulse, dict):
+        for it in pulse.get('items') or []:
+            try:
+                t = datetime.fromisoformat(it['dt']).astimezone(IL)
+            except Exception:
+                continue
+            if now - t <= timedelta(hours=18) and t <= now + timedelta(minutes=5):
+                news.append(f"{t:%H:%M} [{it.get('source', '')}] {it.get('text', '')}")
+    if news:
+        parts.append('מבזקים אחרונים (החדש ראשון):\n' + '\n'.join(news[:25]))
+        noise = re.compile(r'\$MACRO|Fear & Greed|BID-TO-COVER|ACTUAL .*FORECAST', re.I)
+        fallback = [n.split('] ', 1)[-1][:160] for n in news if not noise.search(n)][:4]
+    brief, _ = load_json('briefing.json')
+    if isinstance(brief, dict):
+        aft = brief.get('afternoon') or {}
+        if aft.get('dateLabel', '').startswith(now.strftime('%d/%m/%Y')):
+            txt = html_to_text(load_site_text(aft['file'])) if aft.get('file') else ''
+            parts.append('תדריך המשקיעים של אחר הצהריים:\n' + (txt[:3500] or ' · '.join(aft.get('headlines') or [])))
+            heads = [re.sub(r'^\W+', '', h).strip() for h in aft.get('headlines') or []]
+            if heads:
+                fallback = [f"מתדריך הצהריים: {' · '.join(h for h in heads if h)}"] + fallback[:3]
+    flash, _ = load_json('flash.json')
+    if isinstance(flash, dict) and flash.get('date') == now.strftime('%d/%m/%Y'):
+        ev = [x.get('text', '') for x in (flash.get('evidence') or {}).get('pulse') or []]
+        parts.append(f"מבזק תנועה חדה ב-{flash.get('time')}: {flash.get('label')} {flash.get('pct')}% · " + ' | '.join(ev[:5]))
+    wk, _ = load_json('weekend.json')
+    if isinstance(wk, dict) and wk.get('items'):
+        parts.append('מניות גדולות היום: ' + ', '.join(f"{i['label']} {i['chg']:+.2f}%" for i in wk['items'] if i.get('chg') is not None))
+    if isinstance(movers, dict):
+        act = movers.get('active') or []
+        if act:
+            parts.append('הכי נסחרות: ' + ', '.join(f"{x['symbol']} {x['chg']:+.2f}%" for x in act[:8]))
+    return '\n\n'.join(parts), fallback
+
+
+def afternoon_why(now, market, items, reac, movers, pf, use_llm=True):
+    """'Why is this happening' + 'what it means', written by Claude only from the
+    site's own material, longer on big days. Numbers the model writes must
+    appear in that material. Falls back to the latest headlines."""
+    spy = (items.get('spy') or {}).get('chg')
+    qqq = (items.get('qqq') or {}).get('chg')
+    big = (qqq is not None and abs(qqq) >= BIG_MOVE_QQQ) or (spy is not None and abs(spy) >= BIG_MOVE_SPY)
+    source, fallback = afternoon_sources(now, movers)
+    if not source:
+        return None
+    facts = []
+    if items:
+        facts.append('המדדים מאז הסגירה הקודמת: ' + ', '.join(
+            f"{k.upper()} {items[k]['chg']:+.2f}%" for k in ('spy', 'qqq', 'iwm', 'vix') if k in items and items[k].get('chg') is not None))
+        vl = (market or {}).get('vixLight') or {}
+        if vl.get('spxOffHigh') is not None:
+            facts.append(f"S&P מתחת לשיא 52 שבועות: {vl['spxOffHigh']}% · VIX {vl.get('vix')} · רמזור {vl.get('state')}")
+    if reac:
+        facts.append('תגובה לדוחות: ' + ', '.join(f"{r['ticker']} {r['chg']:+.2f}%" for r in reac[:6]))
+    held = [p['sym'] for p in (pf or {}).get('positions', [])]
+    if held:
+        facts.append('המניות בתיק הווירטואלי שלנו: ' + ', '.join(held))
+    material = '\n'.join(facts) + '\n\n' + source
+
+    text = None
+    key = os.getenv('ANTHROPIC_API_KEY', '').strip()
+    if use_llm and key:
+        length = ('יום של תנועה חדה: כתוב 4 עד 5 סעיפים ממוספרים תחת "למה זה קורה" (כל סעיף 1–2 משפטים, עם השמות והמספרים מהחומר), '
+                  'ואחריהם 2 משפטים תחת "מה זה אומר".' if big else
+                  'יום רגיל: כתוב 2 עד 3 סעיפים ממוספרים קצרים תחת "למה זה קורה", ומשפט אחד תחת "מה זה אומר".')
+        prompt = f"""אתה האנליסט שכותב את "הבריף של נידם" שנשלח בטלגרם שעה אחרי פתיחת המסחר בוול סטריט, לשני משקיעים פרטיים.
+המשימה: להסביר בעברית ברורה מה מניע את השוק היום ולמה, ומה המשמעות למשקיע.
+
+{length}
+
+חוקים:
+- התבסס אך ורק על החומר שלמטה (מבזקים, תדריך, נתונים). אל תמציא סיבות, שמות, מספרים או ציטוטים. אם החומר לא מסביר משהו — אל תנחש.
+- כל מספר שאתה כותב חייב להופיע בחומר כפי שהוא.
+- ציין את מקור הטענה כשזה בית השקעות או בכיר (למשל "לפי UBS", "חברת הפד ...").
+- ב"מה זה אומר" — הערכה זהירה ומעשית (חשיפה, סטופים, מה לעקוב), לא המלצה על מניה מסוימת. אם רלוונטי, ציין אם מניות מהתיק שלנו חשופות לסקטור שנפגע.
+- פורמט טלגרם: שורה "🔍 **למה זה קורה**", סעיפים ממוספרים, שורה ריקה, "🎯 **מה זה אומר**" ואחריה הטקסט. בלי כותרות נוספות, בלי הקדמה.
+- עד 1,600 תווים.
+
+החומר:
+{material}"""
+        try:
+            import anthropic
+            client = anthropic.Anthropic(api_key=key)
+            resp = client.messages.create(model=MODEL, max_tokens=1200,
+                                          messages=[{'role': 'user', 'content': prompt}])
+            text = resp.content[0].text.strip()
+        except Exception as e:
+            print(f'LLM failed (afternoon): {type(e).__name__}: {e}')
+            text = None
+        if text:
+            src_nums = numbers_in(material)
+            bad = {n for n in numbers_in(text) - src_nums
+                   if not any(m.startswith(n) for m in src_nums)} - {'500', '100', '2000', '10'}
+            if bad:
+                print(f'Afternoon explanation rejected, numbers not in source: {bad}')
+                text = None
+            elif len(text) > 2200:
+                print('Afternoon explanation rejected: too long')
+                text = None
+    if text:
+        return [text]
+    if fallback:
+        return ['🔍 **מה מניע את השוק** (מהמבזקים באתר)'] + [f'• {f}' for f in fallback]
+    return None
+
+
+def build_afternoon(now, pf, use_llm=True):
     """Short post-open update: indices, VIX, today's macro prints, reactions to
     earnings, the day's biggest movers, and any of our names among them."""
     today = now.date()
@@ -831,8 +968,10 @@ def build_afternoon(now, pf):
     else:
         mv.append('⚠️ רשימת הבולטות לא עדכנית — החלק דולג.')
 
+    why = afternoon_why(now, market, items, reac, movers, pf, use_llm)
+
     note = ['מחירי המניות בתיק מתעדכנים רק אחרי הסגירה — המצב המלא בבריף של מחר ב-9:00.']
-    sections = [head, sec, macro, rx, mv, note, ['nditzik.github.io/nidam-markets']]
+    sections = [head, sec] + ([why] if why else []) + [macro, rx, mv, note, ['nditzik.github.io/nidam-markets']]
     return '\n\n'.join('\n'.join(x) for x in sections)
 
 
@@ -917,7 +1056,7 @@ def main():
             if state.get('last_sent_afternoon') == today:
                 print(f'Afternoon brief already sent today ({today}).')
                 return
-        message = build_afternoon(now, read_json_file(PORTFOLIO_FILE, None))
+        message = build_afternoon(now, read_json_file(PORTFOLIO_FILE, None), use_llm=not args.no_llm)
         if args.test:
             print(message)
             print(f'\n--- test mode: not sent, nothing saved ({len(message)} chars) ---')
