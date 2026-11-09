@@ -3,8 +3,8 @@
   "start_cash": 10000.0,
   "start_date": "2026-10-29",
   "spy_start": 769.36,
-  "cash": 2741.472210756737,
-  "last_day": "2026-11-05",
+  "cash": 1741.4722107567368,
+  "last_day": "2026-11-06",
   "positions": [
     {
       "sym": "GDRX",
@@ -75,6 +75,17 @@
       "cost": 1000.0,
       "bought": "2026-11-04",
       "edition": "2026-11-04"
+    },
+    {
+      "sym": "FTRE",
+      "name": "Fortrea Holdings Inc",
+      "entry": 21.96,
+      "stop": 18.22,
+      "target": 29.44,
+      "shares": 45.537340619307834,
+      "cost": 1000.0,
+      "bought": "2026-11-06",
+      "edition": "2026-11-06"
     }
   ],
   "closed": [
