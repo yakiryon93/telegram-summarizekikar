@@ -10,6 +10,9 @@ on:
     # Afternoon brief, target 17:30 Israel (an hour after the US open); a backup
     # for the scheduled task that triggers it on time. Sends 17:30–21:00, once a day.
     - cron: '7,37 15-17 * * 1-5'
+    # Saturday weekly summary, target 12:15 Israel; a backup for the scheduled
+    # task that triggers it on time. Sends 12:15–20:00, once a Saturday.
+    - cron: '17,47 10-13 * * 6'
   workflow_dispatch:
     inputs:
       mode:
@@ -22,6 +25,8 @@ on:
           - 'הודעה חופשית'
           - 'בריף אחרי הפתיחה'
           - 'בדיקת בריף אחרי הפתיחה'
+          - 'סיכום שבועי'
+          - 'בדיקת סיכום שבועי'
         default: 'בדיקה'
       to:
         description: 'לשליחה חוזרת / הודעה חופשית: מספר בפורמט +972... או @username (בהודעה חופשית ריק = קובי)'
@@ -72,6 +77,12 @@ jobs:
         run: |
           if [ "$SCHEDULE" = "7,37 15-17 * * 1-5" ]; then
             python morning_brief.py --afternoon
+          elif [ "$SCHEDULE" = "17,47 10-13 * * 6" ]; then
+            python morning_brief.py --weekly
+          elif [ "$MODE" = "בדיקת סיכום שבועי" ]; then
+            python morning_brief.py --weekly --test
+          elif [ "$MODE" = "סיכום שבועי" ]; then
+            python morning_brief.py --weekly --send-now
           elif [ "$MODE" = "בדיקת בריף אחרי הפתיחה" ]; then
             python morning_brief.py --afternoon --test
           elif [ "$MODE" = "בריף אחרי הפתיחה" ]; then
@@ -98,7 +109,7 @@ jobs:
 
       - name: Commit portfolio and state
         # !cancelled(): still save if one recipient failed but another got it
-        if: ${{ !cancelled() && github.event.inputs.mode != 'בדיקה' && github.event.inputs.mode != 'שליחה חוזרת' && github.event.inputs.mode != 'הודעה חופשית' && github.event.inputs.mode != 'בדיקת בריף אחרי הפתיחה' }}
+        if: ${{ !cancelled() && github.event.inputs.mode != 'בדיקה' && github.event.inputs.mode != 'שליחה חוזרת' && github.event.inputs.mode != 'הודעה חופשית' && github.event.inputs.mode != 'בדיקת בריף אחרי הפתיחה' && github.event.inputs.mode != 'בדיקת סיכום שבועי' }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
