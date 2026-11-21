@@ -988,9 +988,159 @@ def build_afternoon(now, pf, use_llm=True):
 
     why = afternoon_why(now, market, items, reac, movers, pf, use_llm)
 
-    note = ['מחירי המניות בתיק מתעדכנים רק אחרי הסגירה — המצב המלא בבריף של מחר ב-9:00.']
+    nxt_brief = 'בסיכום השבועי מחר ב-12:15' if today.weekday() == 4 else 'בבריף של מחר ב-9:00'
+    note = [f'מחירי המניות בתיק מתעדכנים רק אחרי הסגירה — המצב המלא {nxt_brief}.']
     sections = [head, sec] + ([why] if why else []) + [macro, rx, mv, note, ['nditzik.github.io/nidam-markets']]
     return '\n\n'.join('\n'.join(x) for x in sections)
+
+
+# ---------- weekly summary (Saturday) ----------
+
+WEEKLY_FROM = (12, 15)    # earliest Israel time a scheduled Saturday run sends
+WEEKLY_UNTIL_HOUR = 20
+TELEGRAM_LIMIT = 4000     # Telegram allows 4096 characters per message
+
+
+def week_change(sym, week_start):
+    """% change from the last close before `week_start` to the latest close."""
+    bars = load_bars(sym)
+    if not bars:
+        return None, None
+    before = [c for d, c in bars if d < week_start]
+    if not before:
+        return None, None
+    return (bars[-1][1] / before[-1] - 1) * 100, bars[-1][0]
+
+
+def day_change(sym):
+    bars = load_bars(sym)
+    if not bars or len(bars) < 2:
+        return None
+    return (bars[-1][1] / bars[-2][1] - 1) * 100
+
+
+def build_weekly(now, pf):
+    """Saturday: Friday's session + the week that ended + our portfolio at
+    Friday's close + the week ahead. Text comes from the site's weekly.json
+    (written by the site in Hebrew); numbers from bars/market. Returns
+    (message, pf_changed)."""
+    today = now.date()
+    weekly, _ = load_json('weekly.json')
+    market, _ = load_json('market.json')
+    econ, _ = load_json('econ.json')
+    ahead, _ = load_json('week_ahead.json')
+    picks, _ = load_json('picks.json')
+    ledger, _ = load_json('picks_ledger.json')
+
+    friday = today - timedelta(days=(today.weekday() - 4) % 7)
+    monday = friday - timedelta(days=4)
+    fresh = isinstance(weekly, dict) and weekly.get('to') == friday.isoformat()
+    days = (weekly or {}).get('days') or [] if fresh else []
+    narr = (weekly or {}).get('narrative') or {} if fresh else {}
+
+    head = [f'📅 **הבריף של נידם · סיכום שבוע · שבת {today:%d.%m.%Y}**']
+
+    # Friday's session
+    items = {it['key']: it for it in (market or {}).get('items', [])} if isinstance(market, dict) else {}
+    fri = [f'📉 **יום שישי ({friday.day}.{friday.month})**']
+    idx = []
+    for sym, label in (('SPY', 'S&P 500 (SPY)'), ('QQQ', 'נאסד"ק 100 (QQQ)'), ('IWM', 'ראסל 2000 (IWM)')):
+        bars = load_bars(sym)
+        if bars and bars[-1][0] == friday.isoformat():
+            idx.append(f'{label} {with_lrm(pct(day_change(sym)))}')
+    if idx:
+        fri.append('• ' + ' · '.join(idx))
+    vix = items.get('vix')
+    if vix:
+        light = {'green': '🟢 ירוק', 'yellow': '🟡 צהוב', 'red': '🔴 אדום'}.get(((market or {}).get('vixLight') or {}).get('state'), '')
+        fri.append(f"• VIX {vix['price']:.1f} ({with_lrm(pct(vix.get('chg'), 1))})" + (f' · רמזור {light}' if light else '')
+                   + (f" · תשואת 10 שנים {items['tnx']['price']:.2f}%" if 'tnx' in items else ''))
+    if days and days[-1].get('date') == friday.isoformat() and days[-1].get('headline'):
+        fri.append(days[-1]['headline'])
+    if len(fri) == 1:
+        fri.append('⚠️ נתוני יום שישי לא נטענו.')
+
+    # day by day
+    wk = [f'🗓 **השבוע ({monday.day}–{friday.day}.{friday.month}) – יום אחרי יום**']
+    for d in days:
+        if not d.get('headline') or d.get('date') == friday.isoformat():
+            continue  # Friday is the section above
+        chg = d.get('chg')
+        shown = chg is not None and f'{abs(chg):.2f}' in d['headline']
+        wk.append(f"• {d.get('dow', '')}: " + ('' if shown or chg is None else f'S&P {with_lrm(pct(chg))} · ') + d['headline'])
+    if len(wk) == 1:
+        wk = []
+
+    # the week in numbers
+    tot = ['📊 **השורה השבועית**']
+    wc = []
+    for sym, label in (('SPY', 'S&P 500 (SPY)'), ('QQQ', 'נאסד"ק 100 (QQQ)'), ('IWM', 'ראסל 2000 (IWM)')):
+        ch, _ = week_change(sym, monday.isoformat())
+        if ch is not None:
+            wc.append(f'{label} {with_lrm(pct(ch))}')
+    if wc:
+        tot.append('• ' + ' · '.join(wc))
+    summ = (weekly or {}).get('summary') or {} if fresh else {}
+    if summ.get('vixStart') and summ.get('vixEnd'):
+        line = f"• VIX: מ-{summ['vixStart']:.1f} ל-{summ['vixEnd']:.1f}"
+        if summ.get('sellDays') is not None:
+            line += f" · ימי מכירה רחבה: {summ['sellDays']} מתוך {len(days) or 5}"
+        tot.append(line)
+    extra = [narr.get(k) for k in ('sectors', 'earnings', 'drivers') if narr.get(k)]
+
+    # portfolio at Friday's close (the replay sells/buys Friday like a weekday run would)
+    pf_changed = False
+    spy = load_bars('SPY')
+    if spy and spy[-1][0] == friday.isoformat():
+        editions = editions_from_sources(picks if isinstance(picks, dict) and picks.get('date') == friday.isoformat() else None, ledger)
+        bought, sold = run_portfolio(pf, editions, [d for d, _ in spy])
+        pf_changed = True
+        port = portfolio_section(pf, bought, sold)
+        port[0] = '💼 **התיק שלנו** (וירטואלי, לפי סגירת שישי)'
+        week_sold = [c for c in pf.get('closed', []) if monday.isoformat() <= c.get('sold', '') <= friday.isoformat()
+                     and c not in sold]
+        if week_sold:
+            port.insert(1, '• נמכרו מוקדם יותר השבוע: ' + ', '.join(
+                f"{c['sym']} {with_lrm(pct(c['ret'], 1))} ({c['reason']})" for c in week_sold))
+        near = []
+        for p in pf['positions']:
+            c = last_close(p['sym'])
+            if c and p.get('stop') and 0 <= (c / p['stop'] - 1) * 100 < 3:
+                near.append(f"{p['sym']} (${c:,.2f}, סטופ ${p['stop']:,.2f})")
+        if near:
+            port.append('⚠️ קרובות לסטופ: ' + ', '.join(near))
+    else:
+        port = portfolio_section(pf, [], [], 'נתוני המחירים של שישי חסרים — התיק לא עודכן.')
+
+    # week ahead
+    nxt = ['🔭 **השבוע הבא**']
+    if narr.get('lookahead'):
+        nxt.append(narr['lookahead'])
+    nxt += econ_section(econ, now)[1:] if isinstance(econ, dict) else []
+    seas = (ahead or {}).get('seasonality') or {}
+    al = seas.get('all') or {}
+    if seas.get('label') and al.get('upPct') is not None and al.get('avg') is not None:
+        nxt.append(f"• עונתיות ({seas['label']}): ה-S&P עלה ב-{al['upPct']}% מהשנים מאז {seas.get('since', '')}, "
+                   f"בממוצע {with_lrm(pct(al['avg']))}")
+    nxt = [l for l in nxt if l != 'היום אין נתון מתוזמן.']
+
+    watch = []
+    if narr.get('watch'):
+        watch = ['🎯 **מה לעקוב**'] + [f'{i}. {w}' for i, w in enumerate(narr['watch'][:3], 1)]
+
+    tail = ['הבריף הבא: יום שני ב-9:00.', 'nditzik.github.io/nidam-markets']
+
+    def assemble(with_extra):
+        tot2 = tot + ([f'• {x}' for x in extra] if with_extra else [])
+        secs = [head, fri] + ([wk] if wk else []) + [tot2, port, nxt] + ([watch] if watch else []) + [tail]
+        return '\n\n'.join('\n'.join(x) for x in secs if x)
+
+    message = assemble(True)
+    if len(message) > TELEGRAM_LIMIT:
+        message = assemble(False)
+    if not fresh:
+        message = message.replace(head[0], head[0] + '\n⚠️ סיכום השבוע מהאתר עוד לא עודכן — רק מספרים.', 1)
+    return message, pf_changed
 
 
 def read_json_file(path, default):
@@ -1041,6 +1191,7 @@ def main():
     ap.add_argument('--custom', action='store_true',
                     help='send the text in $CUSTOM_TEXT to --resend-to (default Kobi); no brief, no state change')
     ap.add_argument('--afternoon', action='store_true', help='the post-open brief instead of the morning one')
+    ap.add_argument('--weekly', action='store_true', help='the Saturday summary of Friday and the week')
     ap.add_argument('--fresh', action='store_true', help='with --resend-to: rebuild instead of resending the stored text')
     ap.add_argument('--now', help='override current time (ISO, Israel time) for testing')
     ap.add_argument('--no-llm', action='store_true')
@@ -1062,6 +1213,36 @@ def main():
             return
         results = asyncio.run(send(text, [to]))
         return 1 if results[to] else None
+
+    if args.weekly:
+        if not args.test:
+            if now.weekday() != 5:
+                print(f'{now:%Y-%m-%d %H:%M} Israel — not Saturday, not sending the weekly summary.')
+                return
+            if not args.send_now and not ((now.hour, now.minute) >= WEEKLY_FROM and now.hour < WEEKLY_UNTIL_HOUR):
+                print(f'{now:%Y-%m-%d %H:%M} Israel — outside the Saturday window, not sending.')
+                return
+            if state.get('last_sent_weekly') == today:
+                print(f'Weekly summary already sent today ({today}).')
+                return
+        pf = read_json_file(PORTFOLIO_FILE, None) or new_portfolio()
+        message, pf_changed = build_weekly(now, pf)
+        if args.test:
+            print(message)
+            print(f'\n--- test mode: not sent, nothing saved ({len(message)} chars) ---')
+            return
+        results = asyncio.run(send(message, [args.resend_to] if args.resend_to else RECIPIENTS))
+        if all(results.values()):
+            print('Weekly summary not sent to anyone.')
+            return 1
+        print(f'Weekly summary sent ({len(message)} chars).')
+        if not args.resend_to:
+            if pf_changed:
+                write_json_file(PORTFOLIO_FILE, pf)
+            state['last_sent_weekly'] = today
+            state['last_message_weekly'] = message
+            write_json_file(STATE_FILE, state)
+        return 1 if any(results.values()) else None
 
     if args.afternoon:
         if not args.test:
