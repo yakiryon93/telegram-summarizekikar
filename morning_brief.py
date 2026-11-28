@@ -1066,14 +1066,127 @@ def write_json_file(path, data):
 COMIC_FILE = os.path.join(HERE, 'brief_comic.png')
 
 
-def make_comic(message):
-    """Comic picture of the message (comic.py); None if it can't be made."""
+STORY_PLAN = {
+    'weekly': ('סיכום השבוע', [
+        ('📈', 'השוק בשבוע', 'שינוי המדדים בשבוע וביום שישי, ומשפט על אופי השבוע'),
+        ('🦸', 'הגיבור', 'המניה/האירוע החיובי הבולט של השבוע ולמה'),
+        ('🦹', 'הנבלים', 'האירועים/המניות השליליים הבולטים (נתון מאקרו, דוחות שאכזבו)'),
+        ('😱', 'מדד הפחד', 'ה-VIX מאיפה לאן, ומה זה אומר'),
+        ('💼', 'התיק שלנו', 'שווי ותשואה מול SPY, הכי טובות, הכי חלשות, קניות/מכירות'),
+        ('🔭', 'מה הלאה', 'האירועים של השבוע הבא עם תאריכים, ושאלת המבחן'),
+    ]),
+    'morning': ('בוקר', [
+        ('📈', 'אתמול בוול סטריט', 'המדדים בסגירה ומה הניע אותם'),
+        ('🦸', 'הגיבור', 'החיובי הבולט אתמול או הבוקר'),
+        ('🦹', 'הנבל', 'השלילי הבולט'),
+        ('🌅', 'הבוקר', 'החוזים וה-VIX ומה זה אומר לפתיחה'),
+        ('💼', 'התיק שלנו', 'שווי ותשואה מול SPY, קניות/מכירות, מניה קרובה לסטופ'),
+        ('📅', 'מה היום', 'דוחות, נתוני מאקרו והנבחרות של היום'),
+    ]),
+    'afternoon': ('אחרי הפתיחה', [
+        ('📈', 'השוק עכשיו', 'המדדים מאז הסגירה'),
+        ('🦸', 'הגיבור', 'מה עולה ולמה'),
+        ('🦹', 'הנבל', 'מה יורד ולמה'),
+        ('😱', 'מדד הפחד', 'ה-VIX והרמזור'),
+        ('🏢', 'דוחות ובולטות', 'התגובות לדוחות והמניות הבולטות'),
+        ('🎯', 'מה זה אומר', 'השורה התחתונה למשקיע ולתיק שלנו'),
+    ]),
+}
+
+
+STORY_BIG = ['🚀', '🏆', '💥', '📉', '', '']
+
+
+def story_panels(kind, message, extra=''):
+    """Claude turns the brief into comic panels (hero, villains, ...). Every
+    number must appear in the brief or the extra source. None on any failure."""
+    key = os.getenv('ANTHROPIC_API_KEY', '').strip()
+    if not key or kind not in STORY_PLAN:
+        return None
+    _, plan = STORY_PLAN[kind]
+    spec = '\n'.join(f'{i + 1}. {e} "{t}" — {d}' for i, (e, t, d) in enumerate(plan))
+    source = message + ('\n\nחומר רקע:\n' + extra if extra else '')
     try:
-        from comic import render_comic
+        import anthropic
+        client = anthropic.Anthropic(api_key=key)
+        response = client.messages.create(
+            model=MODEL,
+            max_tokens=1500,
+            messages=[{'role': 'user', 'content': f"""אתה כותב קומיקס של בריף שוק ההון למשקיעים פרטיים, בעברית פשוטה וקלילה.
+כתוב 6 פאנלים לפי הסדר:
+{spec}
+
+לכל פאנל: 1–3 שורות קצרות (עד 75 תווים כל אחת) ו/או בועת דיבור אחת (עד 100 תווים), ואימוג'י גדול אחד שמתאים לתוכן.
+אפשר להוסיף לפאנל אחד "badge" קצר (כמו "בום!" או "אאוץ'!") ביום של תנועה חדה.
+
+חוקים:
+- התבסס אך ורק על החומר שלמטה. כל מספר, אחוז, מחיר ותאריך חייב להופיע בחומר בדיוק כך. אל תמציא עובדות או שמות.
+- אחוזים עם סימן: ‎+5.6% או ‎-2.7%.
+- אם אין לפאנל חומר מתאים — כתוב בו משהו כללי קצר בלי מספרים, אל תמציא.
+
+החזר JSON בלבד, בלי טקסט נוסף:
+{{"panels":[{{"title":"...","emoji":"...","big":"...","lines":["..."],"bubble":"...","badge":""}}]}}
+
+החומר:
+{source}"""}],
+        )
+        text = response.content[0].text.strip()
+        text = text[text.find('{'):text.rfind('}') + 1]
+        panels = json.loads(text)['panels']
+    except Exception as e:
+        print(f'Story comic LLM failed: {type(e).__name__}: {e}')
+        return None
+    allowed = numbers_in(source) | {'500', '100', '2000', '50', '10'}
+    clean = []
+    for i, p in enumerate(panels[:6]):
+        emoji, title, _ = plan[i] if i < len(plan) else ('', p.get('title', ''), '')
+        lines = [str(l)[:90] for l in (p.get('lines') or [])][:3]
+        bubble = str(p.get('bubble') or '')[:120]
+        badge = str(p.get('badge') or '')[:10]
+        bad = numbers_in(' '.join(lines + [bubble, badge])) - allowed
+        if bad:
+            print(f'Story comic rejected, numbers not in source: {bad}')
+            return None
+        big = str(p.get('big') or '')[:4]
+        if not big or big == emoji or big == p.get('emoji'):
+            big = STORY_BIG[i] if i < len(STORY_BIG) else ''
+        clean.append({'title': title, 'emoji': emoji, 'big': big,
+                      'lines': lines, 'bubble': bubble, 'badge': badge})
+    return clean if len(clean) >= 4 else None
+
+
+def make_comic(message, kind=None, extra='', subtitle=''):
+    """The story comic (hero, villains, ...) when Claude can write it, else
+    panels straight from the message (comic.py). None if neither works."""
+    try:
+        import comic
     except Exception as e:
         print(f'Comic unavailable: {e}')
         return None
-    return render_comic(message, COMIC_FILE)
+    panels = story_panels(kind, message, extra) if kind else None
+    if panels:
+        print('Story comic panels:', json.dumps(panels, ensure_ascii=False))
+        title = message.split('\n', 1)[0].replace('**', '').replace('📅', '🗞️').strip()
+        if comic.render_story(title, subtitle, panels, COMIC_FILE):
+            return COMIC_FILE
+    return comic.render_comic(message, COMIC_FILE)
+
+
+def weekly_extra():
+    w, _ = load_json('weekly.json')
+    if not isinstance(w, dict):
+        return ''
+    n = w.get('narrative') or {}
+    parts = [d.get('headline', '') for d in w.get('days') or []]
+    parts += [n.get(k, '') for k in ('lead', 'news', 'earnings', 'drivers', 'lookahead')]
+    return '\n'.join(x for x in parts if x)
+
+
+def morning_extra():
+    a, _ = load_json('claude_analysis.json')
+    if not isinstance(a, dict):
+        return ''
+    return '\n'.join(a.get(k, '') for k in ('headline', 'tldr', 'bottomline') if a.get(k))
 
 
 async def send(message, recipients, image=None):
@@ -1158,7 +1271,9 @@ def main():
                 return
         pf = read_json_file(PORTFOLIO_FILE, None) or new_portfolio()
         message, pf_changed = build_weekly(now, pf)
-        image = make_comic(message)
+        fri = now.date() - timedelta(days=(now.weekday() - 4) % 7)
+        mon = fri - timedelta(days=4)
+        image = make_comic(message, 'weekly', weekly_extra(), f'שבוע {mon.day}.{mon.month}–{fri.day}.{fri.month}')
         if args.test:
             print(message)
             print(f'\n--- test mode: not sent, nothing saved ({len(message)} chars, comic: {image}) ---')
@@ -1188,7 +1303,7 @@ def main():
                 print(f'Afternoon brief already sent today ({today}).')
                 return
         message = build_afternoon(now, read_json_file(PORTFOLIO_FILE, None), use_llm=not args.no_llm)
-        image = make_comic(message)
+        image = make_comic(message, None if args.no_llm else 'afternoon', '', f'{now:%H:%M} · שעה אחרי הפתיחה בוול סטריט')
         if args.test:
             print(message)
             print(f'\n--- test mode: not sent, nothing saved ({len(message)} chars, comic: {image}) ---')
@@ -1239,7 +1354,7 @@ def main():
 
     pf = read_json_file(PORTFOLIO_FILE, None) or new_portfolio()
     message, pf_changed = build_brief(now, pf, use_llm=not args.no_llm)
-    image = make_comic(message)
+    image = make_comic(message, None if args.no_llm else 'morning', morning_extra(), 'מה היה אתמול ומה מחכה היום')
 
     if args.test:
         print(message)
