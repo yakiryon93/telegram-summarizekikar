@@ -1063,8 +1063,22 @@ def write_json_file(path, data):
         f.write('\n')
 
 
-async def send(message, recipients):
-    """Sends to each recipient; one failure doesn't stop the others.
+COMIC_FILE = os.path.join(HERE, 'brief_comic.png')
+
+
+def make_comic(message):
+    """Comic picture of the message (comic.py); None if it can't be made."""
+    try:
+        from comic import render_comic
+    except Exception as e:
+        print(f'Comic unavailable: {e}')
+        return None
+    return render_comic(message, COMIC_FILE)
+
+
+async def send(message, recipients, image=None):
+    """Sends to each recipient; one failure doesn't stop the others. The
+    comic picture (if any) follows the text; its failure doesn't count.
     Returns {recipient: None | error}."""
     from telethon import TelegramClient, functions, types
     from telethon.sessions import StringSession
@@ -1083,6 +1097,12 @@ async def send(message, recipients):
                     await client.send_message(to, message)
                 results[to] = None
                 print(f'Sent to {to}.')
+                if image:
+                    try:
+                        await client.send_file(to, image)
+                        print(f'Comic sent to {to}.')
+                    except Exception as e:
+                        print(f'Comic to {to} failed: {type(e).__name__}: {e}')
             except Exception as e:
                 results[to] = f'{type(e).__name__}: {e}'
                 print(f'FAILED to send to {to}: {results[to]}')
@@ -1128,16 +1148,17 @@ def main():
             if not args.send_now and not ((now.hour, now.minute) >= WEEKLY_FROM and now.hour < WEEKLY_UNTIL_HOUR):
                 print(f'{now:%Y-%m-%d %H:%M} Israel — outside the Saturday window, not sending.')
                 return
-            if state.get('last_sent_weekly') == today:
+            if state.get('last_sent_weekly') == today and not args.resend_to:
                 print(f'Weekly summary already sent today ({today}).')
                 return
         pf = read_json_file(PORTFOLIO_FILE, None) or new_portfolio()
         message, pf_changed = build_weekly(now, pf)
+        image = make_comic(message)
         if args.test:
             print(message)
-            print(f'\n--- test mode: not sent, nothing saved ({len(message)} chars) ---')
+            print(f'\n--- test mode: not sent, nothing saved ({len(message)} chars, comic: {image}) ---')
             return
-        results = asyncio.run(send(message, [args.resend_to] if args.resend_to else RECIPIENTS))
+        results = asyncio.run(send(message, [args.resend_to] if args.resend_to else RECIPIENTS, image))
         if all(results.values()):
             print('Weekly summary not sent to anyone.')
             return 1
@@ -1162,11 +1183,12 @@ def main():
                 print(f'Afternoon brief already sent today ({today}).')
                 return
         message = build_afternoon(now, read_json_file(PORTFOLIO_FILE, None), use_llm=not args.no_llm)
+        image = make_comic(message)
         if args.test:
             print(message)
-            print(f'\n--- test mode: not sent, nothing saved ({len(message)} chars) ---')
+            print(f'\n--- test mode: not sent, nothing saved ({len(message)} chars, comic: {image}) ---')
             return
-        results = asyncio.run(send(message, [args.resend_to] if args.resend_to else RECIPIENTS))
+        results = asyncio.run(send(message, [args.resend_to] if args.resend_to else RECIPIENTS, image))
         if all(results.values()):
             print('Afternoon brief not sent to anyone.')
             return 1
@@ -1212,13 +1234,14 @@ def main():
 
     pf = read_json_file(PORTFOLIO_FILE, None) or new_portfolio()
     message, pf_changed = build_brief(now, pf, use_llm=not args.no_llm)
+    image = make_comic(message)
 
     if args.test:
         print(message)
-        print(f'\n--- test mode: not sent, nothing saved ({len(message)} chars) ---')
+        print(f'\n--- test mode: not sent, nothing saved ({len(message)} chars, comic: {image}) ---')
         return
 
-    results = asyncio.run(send(message, RECIPIENTS))
+    results = asyncio.run(send(message, RECIPIENTS, image))
     if all(results.values()):
         print('Brief not sent to anyone.')
         return 1
