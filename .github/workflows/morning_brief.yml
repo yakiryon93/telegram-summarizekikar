@@ -27,6 +27,7 @@ on:
           - 'בדיקת בריף אחרי הפתיחה'
           - 'סיכום שבועי'
           - 'בדיקת סיכום שבועי'
+          - 'סיכום שבועי לנמען'
         default: 'בדיקה'
       to:
         description: 'לשליחה חוזרת / הודעה חופשית: מספר בפורמט +972... או @username (בהודעה חופשית ריק = קובי)'
@@ -63,6 +64,14 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Install the browser for the comic picture
+        # The brief still goes out as text if this step fails.
+        continue-on-error: true
+        run: |
+          pip install playwright==1.48.0
+          python -m playwright install --with-deps chromium
+          sudo apt-get install -y fonts-noto-color-emoji
+
       - name: Run morning brief
         env:
           TG_API_ID: ${{ secrets.TG_API_ID }}
@@ -81,6 +90,8 @@ jobs:
             python morning_brief.py --weekly
           elif [ "$MODE" = "בדיקת סיכום שבועי" ]; then
             python morning_brief.py --weekly --test
+          elif [ "$MODE" = "סיכום שבועי לנמען" ]; then
+            python morning_brief.py --weekly --send-now --resend-to "$TO"
           elif [ "$MODE" = "סיכום שבועי" ]; then
             python morning_brief.py --weekly --send-now
           elif [ "$MODE" = "בדיקת בריף אחרי הפתיחה" ]; then
@@ -109,7 +120,7 @@ jobs:
 
       - name: Commit portfolio and state
         # !cancelled(): still save if one recipient failed but another got it
-        if: ${{ !cancelled() && github.event.inputs.mode != 'בדיקה' && github.event.inputs.mode != 'שליחה חוזרת' && github.event.inputs.mode != 'הודעה חופשית' && github.event.inputs.mode != 'בדיקת בריף אחרי הפתיחה' && github.event.inputs.mode != 'בדיקת סיכום שבועי' }}
+        if: ${{ !cancelled() && github.event.inputs.mode != 'בדיקה' && github.event.inputs.mode != 'שליחה חוזרת' && github.event.inputs.mode != 'הודעה חופשית' && github.event.inputs.mode != 'בדיקת בריף אחרי הפתיחה' && github.event.inputs.mode != 'בדיקת סיכום שבועי' && github.event.inputs.mode != 'סיכום שבועי לנמען' }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
