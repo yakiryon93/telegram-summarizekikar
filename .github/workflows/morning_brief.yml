@@ -37,6 +37,10 @@ on:
         description: 'להודעה חופשית בלבד: הטקסט לשליחה'
         type: string
         required: false
+      image:
+        description: 'להודעה חופשית בלבד: נתיב לתמונה בריפו לשליחה אחרי הטקסט (למשל comics/2026-11-28.png)'
+        type: string
+        required: false
       fresh:
         description: 'לשליחה חוזרת בלבד: לבנות את ההודעה מחדש מהנתונים העדכניים (במקום לשלוח את הנוסח השמור)'
         type: boolean
@@ -81,6 +85,7 @@ jobs:
           MODE: ${{ github.event.inputs.mode }}
           TO: ${{ github.event.inputs.to }}
           CUSTOM_TEXT: ${{ github.event.inputs.text }}
+          CUSTOM_IMAGE: ${{ github.event.inputs.image }}
           FRESH: ${{ github.event.inputs.fresh }}
           SCHEDULE: ${{ github.event.schedule }}
         run: |

@@ -1133,11 +1133,16 @@ def main():
             print('CUSTOM_TEXT is empty; nothing to send.')
             return 1
         to = args.resend_to or KOBI
+        img = os.getenv('CUSTOM_IMAGE', '').strip()
+        img = os.path.join(HERE, img) if img else None
+        if img and not os.path.isfile(img):
+            print(f'Image not found: {img}')
+            return 1
         if args.test:
             print(text)
-            print(f'\n--- test mode: would send to {to} ---')
+            print(f'\n--- test mode: would send to {to} (image: {img}) ---')
             return
-        results = asyncio.run(send(text, [to]))
+        results = asyncio.run(send(text, [to], img))
         return 1 if results[to] else None
 
     if args.weekly:
