@@ -1094,6 +1094,9 @@ STORY_PLAN = {
 }
 
 
+STORY_BIG = ['🚀', '🏆', '💥', '📉', '', '']
+
+
 def story_panels(kind, message, extra=''):
     """Claude turns the brief into comic panels (hero, villains, ...). Every
     number must appear in the brief or the extra source. None on any failure."""
@@ -1144,7 +1147,10 @@ def story_panels(kind, message, extra=''):
         if bad:
             print(f'Story comic rejected, numbers not in source: {bad}')
             return None
-        clean.append({'title': title, 'emoji': emoji, 'big': str(p.get('big') or '')[:4],
+        big = str(p.get('big') or '')[:4]
+        if not big or big == emoji or big == p.get('emoji'):
+            big = STORY_BIG[i] if i < len(STORY_BIG) else ''
+        clean.append({'title': title, 'emoji': emoji, 'big': big,
                       'lines': lines, 'bubble': bubble, 'badge': badge})
     return clean if len(clean) >= 4 else None
 
