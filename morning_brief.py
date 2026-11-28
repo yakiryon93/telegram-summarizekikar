@@ -223,7 +223,7 @@ def llm_market_sentences(analysis, facts_text, session_word='אתמול'):
             messages=[{
                 'role': 'user',
                 'content': f"""אתה כותב את פסקת השוק בבריף בוקר בטלגרם למשקיע פרטי.
-כתוב 2 עד 3 משפטים קצרים בעברית: מה קרה {session_word} בוול סטריט (יום המסחר האחרון), איך נראים החוזים הבוקר, ומה המשמעות.
+כתוב משפט אחד עד שניים קצרים בעברית (עד 40 מילים): מה קרה {session_word} בוול סטריט ולמה, ומה זה אומר להיום. תכלס, בלי מליצות.
 {session_note}
 
 חוקים:
@@ -245,7 +245,7 @@ def llm_market_sentences(analysis, facts_text, session_word='אתמול'):
     if invented:
         print(f'LLM output rejected, numbers not in source: {invented}')
         return None
-    if len(text) > 700:
+    if len(text) > 400:
         print('LLM output rejected: too long')
         return None
     return text
@@ -275,14 +275,12 @@ def market_section(analysis, market, last_session, now, use_llm=True):
         spy, qqq, iwm = mkt_items.get('spy'), mkt_items.get('qqq'), mkt_items.get('iwm')
         es, nq, vix = mkt_items.get('es'), mkt_items.get('nq'), mkt_items.get('vix')
         y = []
-        if es and es.get('indexClose') and spy:
-            y.append(f"S&P 500 (SPY) {pct(spy.get('chg'))}, סגירה {es['indexClose']:,.0f}")
-        elif spy:
-            y.append(f"S&P 500 (SPY) {pct(spy.get('chg'))}")
+        if spy:
+            y.append(f"S&P {with_lrm(pct(spy.get('chg')))}")
         if qqq:
-            y.append(f"נאסד\"ק 100 (QQQ) {pct(qqq.get('chg'))}")
+            y.append(f"נאסד\"ק {with_lrm(pct(qqq.get('chg')))}")
         if iwm:
-            y.append(f"ראסל 2000 (IWM) {pct(iwm.get('chg'))}")
+            y.append(f"ראסל {with_lrm(pct(iwm.get('chg')))}")
         if y:
             when = ''
             if es and es.get('indexCloseDate'):
@@ -291,23 +289,16 @@ def market_section(analysis, market, last_session, now, use_llm=True):
             facts.append(f'• בסגירה{when}: ' + ' · '.join(y))
         f = []
         if es:
-            f.append(f"S&P {pct(es.get('overnight', es.get('chg')))}")
+            f.append(f"S&P {with_lrm(pct(es.get('overnight', es.get('chg'))))}")
         if nq:
-            f.append(f"נאסד\"ק {pct(nq.get('overnight', nq.get('chg')))}")
-        if f:
-            facts.append('• החוזים הבוקר: ' + ' · '.join(f))
+            f.append(f"נאסד\"ק {with_lrm(pct(nq.get('overnight', nq.get('chg'))))}")
         vl = market.get('vixLight') or {}
-        if vix or vl:
-            v = vl.get('vix') or (vix or {}).get('price')
-            light = {'green': '🟢 ירוק', 'yellow': '🟡 צהוב', 'red': '🔴 אדום'}.get(vl.get('state'), '')
-            s = f'• VIX {v:.1f}' if v else '• VIX'
-            if light:
-                s += f' · רמזור {light}'
-            if vl.get('ratio'):
-                s += f" ({pct((vl['ratio'] - 1) * 100, 0)} מול ממוצע 50 יום)"
-            if vl.get('spike'):
-                s += ' · ⚠️ דיברגנס'
-            facts.append(s)
+        v = vl.get('vix') or (vix or {}).get('price')
+        if v:
+            light = {'green': '🟢', 'yellow': '🟡', 'red': '🔴'}.get(vl.get('state'), '')
+            f.append(f'VIX {v:.1f} {light}'.strip())
+        if f:
+            facts.append('• הבוקר: חוזים ' + ' · '.join(f))
 
     if not ana_ok and not mkt_items:
         why = '; '.join(notes) or 'הקבצים לא נטענו'
@@ -324,9 +315,6 @@ def market_section(analysis, market, last_session, now, use_llm=True):
     if prose:
         lines.append(prose)
     lines += facts
-    if ana_ok and analysis.get('bottomline'):
-        bl = re.sub(r'^\s*שורה תחתונה:\s*', '', analysis['bottomline'])
-        lines.append(f'🎯 שורה תחתונה: {bl}')
     for n in notes:
         lines.append(f'⚠️ {n} — דילגתי עליו.')
     return lines
@@ -335,28 +323,18 @@ def market_section(analysis, market, last_session, now, use_llm=True):
 # ---------- section 3: earnings ----------
 
 def earnings_section(earnings, today):
-    lines = ['🏢 **מדווחות היום**']
-    if not isinstance(earnings, dict):
-        return lines + ['⚠️ לוח הדוחות לא נטען — החלק דולג.']
-    if earnings.get('today') != today.isoformat():
-        return lines + [f"⚠️ לוח הדוחות ישן (של {earnings.get('today', '?')}) — החלק דולג."]
+    if not isinstance(earnings, dict) or earnings.get('today') != today.isoformat():
+        return []
     big = earnings.get('todayBig') or []
     if not big:
-        return lines + ['אין היום דוחות של חברות גדולות.']
+        return []
     when = {r.get('ticker'): r.get('when') for r in earnings.get('reporting') or []}
-    tag = {'before': 'לפני הפתיחה', 'after': 'אחרי הסגירה'}
+    tag = {'before': 'לפני', 'after': 'אחרי'}
     groups = {}
     for c in big:
-        groups.setdefault(tag.get(when.get(c['ticker']), 'שעה לא ידועה'), []).append(
-            c['ticker'] if company_name(c['ticker'], c.get('name')) == c['ticker']
-            else f"{company_name(c['ticker'], c.get('name'))} ({c['ticker']})")
-    for label in ['לפני הפתיחה', 'אחרי הסגירה', 'שעה לא ידועה']:
-        if label in groups:
-            lines.append(f'• {label}: ' + ', '.join(groups[label]))
-    total = earnings.get('todayCount')
-    if total and total > len(big):
-        lines.append(f'סה"כ {total} חברות מדווחות היום.')
-    return lines
+        groups.setdefault(tag.get(when.get(c['ticker']), 'שעה לא ידועה'), []).append(c['ticker'])
+    parts = [f'{label}: ' + ', '.join(groups[label]) for label in ['לפני', 'אחרי', 'שעה לא ידועה'] if label in groups]
+    return ['🏢 **דוחות היום** · ' + ' · '.join(parts)]
 
 
 # ---------- section 4: macro ----------
@@ -378,30 +356,20 @@ def econ_section(econ, now):
     events.sort(key=lambda x: x[0])
 
     def fmt(e):
-        s = e.get('he', '')
-        if e.get('period'):
-            s += f" ({e['period']})"
-        s += f" — צפי {e['forecast']}" if e.get('forecast') else ' — אין צפי'
-        if e.get('previous'):
-            s += f", קודם {e['previous']}"
-        return s
+        return e.get('he', '') + (f" (צפי {e['forecast']})" if e.get('forecast') else '')
 
     todays = [(t, e) for t, e in events if t.date() == now.date()]
     if todays:
         for t, e in todays:
             lines.append(f"• {t:%H:%M} {fmt(e)}")
         return lines
-    lines.append('היום אין נתון מתוזמן.')
     upcoming = [(t, e) for t, e in events if t > now]
     if upcoming:
         t0 = upcoming[0][0]
         same = [e for t, e in upcoming if t == t0]
-        names = ', '.join(e.get('he', '') for e in same)
-        lines.append(f"הבא: יום {DAY_NAMES[t0.weekday()]} {t0.day}.{t0.month} ב-{t0:%H:%M} — {names}")
-        for e in same:
-            if e.get('forecast'):
-                lines.append(f"  {e['he']}: צפי {e['forecast']}")
-    return lines
+        return [lines[0] + f" · היום אין · הבא: {DAY_NAMES[t0.weekday()]} {t0.day}.{t0.month} {t0:%H:%M} — "
+                + ', '.join(fmt(e) for e in same)]
+    return [lines[0] + ' · היום אין נתון מתוזמן']
 
 
 # ---------- section 5: picks ----------
@@ -411,6 +379,9 @@ def picks_fresh(picks, today):
         date.fromisoformat(picks['date']) >= today - timedelta(days=5)
 
 
+PICKS_SHOWN = 6
+
+
 def picks_section(picks, today):
     lines = ['✦ **הנבחרות**']
     if not isinstance(picks, dict):
@@ -418,31 +389,16 @@ def picks_section(picks, today):
     if not picks_fresh(picks, today):
         return lines + [f"⚠️ מהדורת הנבחרות ישנה ({picks.get('date', '?')}) — החלק דולג."]
     items = picks.get('picks') or []
-    head = f"מהדורת {short_date(picks['date'])}"
-    if picks.get('momOnly'):
-        head += ' (מהמומנטום בלבד)'
-    if not items:
-        lines.append(f'{head}: אין מניות שקיבלו אישור מחיר.')
-    else:
-        new = [p for p in items if not p.get('since')]
-        old = [p for p in items if p.get('since')]
-        lines.append(f'{head}, ' + ('מניה אחת:' if len(items) == 1 else f'{len(items)} מניות:'))
-        if new:
-            lines.append('• חדשות: ' + ', '.join(p['sym'] for p in new))
-        if old:
-            lines.append('• ממשיכות: ' + ', '.join(f"{p['sym']} (מ-{short_date(p['since'])})" for p in old))
+    head = f"✦ **הנבחרות {short_date(picks['date'])}**"
     gate = picks.get('gate') or {}
     if gate.get('label'):
         dot = {'green': '🟢', 'yellow': '🟠', 'neutral': '🟠', 'red': '🔴'}.get(gate.get('state'), '')
-        g = f"מצב השוק: {dot} {gate['label']}".replace('  ', ' ')
-        extra = [x for x in [f"עד {gate['maxPos']} פוזיציות" if gate.get('maxPos') else '', gate.get('sizing', '')] if x]
-        if extra:
-            g += f" ({', '.join(extra)})"
-        lines.append(g)
-    pend = picks.get('pending')
-    if isinstance(pend, dict) and pend.get('waiting'):
-        lines.append(f"⏳ המהדורה הבאה ממתינה ל{' ול'.join(pend['waiting'])}.")
-    return lines
+        head += f" ({dot} {gate['label']})".replace('( ', '(')
+    if not items:
+        return [head + ': אין מניות שקיבלו אישור מחיר.']
+    syms = [p['sym'] for p in items if not p.get('since')] + [p['sym'] for p in items if p.get('since')]
+    shown = ', '.join(syms[:PICKS_SHOWN]) + (f' ועוד {len(syms) - PICKS_SHOWN}' if len(syms) > PICKS_SHOWN else '')
+    return [f'{head}: {shown}']
 
 
 def money_short(x):
@@ -470,14 +426,20 @@ def insider_section(ins, today):
         parts.append(f"{sm['ceo']} מנכ\"לים" if sm['ceo'] > 1 else 'מנכ"ל אחד')
     if sm.get('clusters'):
         parts.append(f"אשכול: {', '.join(sm.get('clusterWho') or [])}")
-    lines.append(' · '.join(parts))
-    cos = {r.get('t'): r.get('co') for r in ins.get('rows') or []}
-    for h in (ins.get('highlights') or [])[:3]:
-        name = company_name(h['t'], cos.get(h['t']))
-        who = h['t'] if name == h['t'] else f"{name} ({h['t']})"
-        lines.append(f"• {who}: {h.get('txt', '')}")
+    lines[0] += ': ' + ' · '.join(parts)
+    tops, seen = [], set()
+    for h in ins.get('highlights') or []:
+        if h['t'] in seen:
+            continue
+        seen.add(h['t'])
+        txt = re.split(r'[.,]\s', h.get('txt', ''), maxsplit=1)[0].rstrip('.')
+        tops.append(f"{h['t']} {txt}")
+        if len(tops) == 2:
+            break
+    if tops:
+        lines.append('• ' + ' · '.join(tops))
     if ins.get('siteHits'):
-        lines.append('✦ גם באתר (נבחרות/מועמדות/מומנטום): ' + ', '.join(ins['siteHits']))
+        lines.append('✦ גם באתר: ' + ', '.join(ins['siteHits']))
     return lines
 
 
@@ -487,11 +449,10 @@ CANDIDATES_SHOWN = 5
 def candidates_section(cands, picks, pf, earnings, today):
     """Top candidates from the site's candidates list that we neither hold nor
     already list as picks — ideas to check, not buys."""
-    lines = ['🔍 **מועמדות לכניסה** (לבדיקה, לא בתיק)']
-    if not isinstance(cands, dict) or not cands.get('candidates'):
-        return lines + ['⚠️ רשימת המועמדים לא נטענה — החלק דולג.']
-    if not cands.get('date') or date.fromisoformat(cands['date']) < today - timedelta(days=5):
-        return lines + [f"⚠️ רשימת המועמדים ישנה ({cands.get('date', '?')}) — החלק דולג."]
+    if not isinstance(cands, dict) or not cands.get('candidates') or not cands.get('date') \
+            or date.fromisoformat(cands['date']) < today - timedelta(days=5):
+        return []
+    lines = []
     skip = {p['sym'] for p in (pf or {}).get('positions', [])}
     if isinstance(picks, dict):
         skip |= {p['sym'] for p in picks.get('picks') or []}
@@ -501,23 +462,17 @@ def candidates_section(cands, picks, pf, earnings, today):
         sym = c.get('symbol')
         if not sym or sym in skip or not c.get('entry'):
             continue
-        s = f"• {sym} · כניסה ${c['entry']:,.2f}"
-        if c.get('stop'):
-            s += f" · סטופ ${c['stop']:,.2f}"
-        if c.get('target'):
-            s += f" · יעד ${c['target']:,.2f}"
-            if c.get('tp_pct'):
-                s += f" ({pct(c['tp_pct'], 1)})"
+        s = sym
         rep_day = window.get(sym)
         if rep_day and today.isoformat() <= rep_day <= (today + timedelta(days=7)).isoformat():
-            s += f" · ⚠️ מדווחת {short_date(rep_day)}"
+            s += f" (⚠️ דוח {short_date(rep_day)})"
         lines.append(s)
         shown += 1
         if shown >= CANDIDATES_SHOWN:
             break
     if not shown:
-        lines.append('אין מועמדות חדשות מעבר למה שכבר בתיק ובנבחרות.')
-    return lines
+        return []
+    return ['🔍 **מועמדות לבדיקה:** ' + ', '.join(lines)]
 
 
 # ---------- section 6: virtual portfolio ----------
@@ -650,37 +605,37 @@ def portfolio_value(pf):
     return total
 
 
-def portfolio_section(pf, bought, sold, note=None):
-    lines = ['💼 **התיק שלנו** (וירטואלי, סימולציה)']
+def portfolio_section(pf, bought, sold, note=None, earlier_sold=None):
+    lines = ['💼 **התיק**']
     if note:
         lines.append(f'⚠️ {note}')
     if pf.get('start_date') is None or pf.get('last_day') is None:
         return lines + ['התיק יתחיל ב-$10,000 עם מהדורת הנבחרות הראשונה שתיקרא.']
-    buys = [b for b in bought if not b.get('skipped')]
-    if buys:
-        lines.append(f"• נקנו ({money(POSITION_SIZE)} כל אחת): " + ', '.join(f"{b['sym']} ${b['entry']:,.2f}" for b in buys))
-    skipped = [b['sym'] for b in bought if b.get('skipped')]
-    if skipped:
-        lines.append(f"• לא נקנו (אין מזומן או מקום): {', '.join(skipped)}")
-    for s in sold:
-        lines.append(f"• נמכרה {s['sym']} ב-${s['exit']:,.2f}: {pct(s['ret'], 1)} "
-                     f"({'+' if s['pnl'] >= 0 else '-'}{money(abs(s['pnl']))}) — {s['reason']}, " + ('אחרי יום אחד' if s['days'] == 1 else f"אחרי {s['days']} ימים"))
-    if not bought and not sold:
-        lines.append('• אין קניות או מכירות היום.')
     value = portfolio_value(pf)
-    ret = (value / pf['start_cash'] - 1) * 100
-    s = f"שווי התיק: {money(value)} ({pct(ret)} מההתחלה)"
+    lines[0] += f" {money(value)} ({with_lrm(pct((value / pf['start_cash'] - 1) * 100, 1))} מ-{short_date(pf['start_date'])})"
     spy_now = last_close('SPY')
     if pf.get('spy_start') and spy_now:
-        s += f" · SPY מאותו יום: {pct((spy_now / pf['spy_start'] - 1) * 100)}"
-    lines.append(s)
+        lines[0] += f" · SPY {with_lrm(pct((spy_now / pf['spy_start'] - 1) * 100, 1))}"
+    moves = []
+    buys = [b for b in bought if not b.get('skipped')]
+    if buys:
+        moves.append('קנינו ' + ', '.join(b['sym'] for b in buys))
+    for x in (earlier_sold or []) + sold:
+        moves.append(f"מכרנו {x['sym']} {with_lrm(pct(x['ret'], 1))} ({x['reason']})")
+    skipped = [b['sym'] for b in bought if b.get('skipped')]
+    if skipped:
+        moves.append(f"{len(skipped)} נבחרות לא נקנו (אין מזומן)")
+    if moves:
+        lines.append('• ' + ' · '.join(moves))
     if pf['positions']:
         held = []
         for p in pf['positions']:
             c = last_close(p['sym'])
-            held.append(f"{p['sym']} {pct((c / p['entry'] - 1) * 100, 1)}" if c else p['sym'])
-        lines.append(f"פתוחות ({len(pf['positions'])}): " + ', '.join(held))
-    lines.append(f"מזומן: {money(pf['cash'])} · התחלה {short_date(pf['start_date'])} עם {money(pf['start_cash'])}")
+            item = f"{p['sym']} {with_lrm(pct((c / p['entry'] - 1) * 100, 1))}" if c else p['sym']
+            if c and p.get('stop') and 0 <= (c / p['stop'] - 1) * 100 < 3:
+                item += ' ⚠️'
+            held.append(item)
+        lines.append('• ' + ', '.join(held))
     return lines
 
 
@@ -730,7 +685,7 @@ def build_brief(now, pf, use_llm=True):
 
     sections.append(candidates_section(cands, picks, pf, earnings, today))
     sections.append(['nditzik.github.io/nidam-markets'])
-    return '\n\n'.join('\n'.join(s) for s in sections), pf_changed
+    return '\n\n'.join('\n'.join(s) for s in sections if s), pf_changed
 
 
 # ---------- afternoon brief (after the US open) ----------
@@ -1040,53 +995,31 @@ def build_weekly(now, pf):
 
     head = [f'📅 **הבריף של נידם · סיכום שבוע · שבת {today:%d.%m.%Y}**']
 
-    # Friday's session
+    # Friday's session + the week, in numbers
     items = {it['key']: it for it in (market or {}).get('items', [])} if isinstance(market, dict) else {}
-    fri = [f'📉 **יום שישי ({friday.day}.{friday.month})**']
-    idx = []
-    for sym, label in (('SPY', 'S&P 500 (SPY)'), ('QQQ', 'נאסד"ק 100 (QQQ)'), ('IWM', 'ראסל 2000 (IWM)')):
+    fri, wk = [], []
+    for sym, label in (('SPY', 'S&P'), ('QQQ', 'נאסד"ק'), ('IWM', 'ראסל')):
         bars = load_bars(sym)
         if bars and bars[-1][0] == friday.isoformat():
-            idx.append(f'{label} {with_lrm(pct(day_change(sym)))}')
-    if idx:
-        fri.append('• ' + ' · '.join(idx))
-    vix = items.get('vix')
-    if vix:
-        light = {'green': '🟢 ירוק', 'yellow': '🟡 צהוב', 'red': '🔴 אדום'}.get(((market or {}).get('vixLight') or {}).get('state'), '')
-        fri.append(f"• VIX {vix['price']:.1f} ({with_lrm(pct(vix.get('chg'), 1))})" + (f' · רמזור {light}' if light else '')
-                   + (f" · תשואת 10 שנים {items['tnx']['price']:.2f}%" if 'tnx' in items else ''))
-    if days and days[-1].get('date') == friday.isoformat() and days[-1].get('headline'):
-        fri.append(days[-1]['headline'])
-    if len(fri) == 1:
-        fri.append('⚠️ נתוני יום שישי לא נטענו.')
-
-    # day by day
-    wk = [f'🗓 **השבוע ({monday.day}–{friday.day}.{friday.month}) – יום אחרי יום**']
-    for d in days:
-        if not d.get('headline') or d.get('date') == friday.isoformat():
-            continue  # Friday is the section above
-        chg = d.get('chg')
-        shown = chg is not None and f'{abs(chg):.2f}' in d['headline']
-        wk.append(f"• {d.get('dow', '')}: " + ('' if shown or chg is None else f'S&P {with_lrm(pct(chg))} · ') + d['headline'])
-    if len(wk) == 1:
-        wk = []
-
-    # the week in numbers
-    tot = ['📊 **השורה השבועית**']
-    wc = []
-    for sym, label in (('SPY', 'S&P 500 (SPY)'), ('QQQ', 'נאסד"ק 100 (QQQ)'), ('IWM', 'ראסל 2000 (IWM)')):
+            fri.append(f'{label} {with_lrm(pct(day_change(sym)))}')
         ch, _ = week_change(sym, monday.isoformat())
         if ch is not None:
-            wc.append(f'{label} {with_lrm(pct(ch))}')
-    if wc:
-        tot.append('• ' + ' · '.join(wc))
+            wk.append(f'{label} {with_lrm(pct(ch))}')
+    mkt = ['📊 **השוק**']
+    if wk:
+        mkt.append('• השבוע: ' + ' · '.join(wk))
+    if fri:
+        mkt.append('• שישי: ' + ' · '.join(fri))
     summ = (weekly or {}).get('summary') or {} if fresh else {}
+    vix = items.get('vix')
     if summ.get('vixStart') and summ.get('vixEnd'):
-        line = f"• VIX: מ-{summ['vixStart']:.1f} ל-{summ['vixEnd']:.1f}"
-        if summ.get('sellDays') is not None:
-            line += f" · ימי מכירה רחבה: {summ['sellDays']} מתוך {len(days) or 5}"
-        tot.append(line)
-    extra = [narr.get(k) for k in ('sectors', 'earnings', 'drivers') if narr.get(k)]
+        mkt.append(f"• VIX: {summ['vixStart']:.1f} ← {summ['vixEnd']:.1f}")
+    elif vix:
+        mkt.append(f"• VIX {vix['price']:.1f}")
+    if narr.get('headline'):
+        mkt.append(f"🎯 {narr['headline']}")
+    if len(mkt) == 1:
+        mkt.append('⚠️ נתוני השבוע לא נטענו.')
 
     # portfolio at Friday's close (the replay sells/buys Friday like a weekday run would)
     pf_changed = False
@@ -1095,49 +1028,22 @@ def build_weekly(now, pf):
         editions = editions_from_sources(picks if isinstance(picks, dict) and picks.get('date') == friday.isoformat() else None, ledger)
         bought, sold = run_portfolio(pf, editions, [d for d, _ in spy])
         pf_changed = True
-        port = portfolio_section(pf, bought, sold)
-        port[0] = '💼 **התיק שלנו** (וירטואלי, לפי סגירת שישי)'
-        week_sold = [c for c in pf.get('closed', []) if monday.isoformat() <= c.get('sold', '') <= friday.isoformat()
-                     and c not in sold]
-        if week_sold:
-            port.insert(1, '• נמכרו מוקדם יותר השבוע: ' + ', '.join(
-                f"{c['sym']} {with_lrm(pct(c['ret'], 1))} ({c['reason']})" for c in week_sold))
-        near = []
-        for p in pf['positions']:
-            c = last_close(p['sym'])
-            if c and p.get('stop') and 0 <= (c / p['stop'] - 1) * 100 < 3:
-                near.append(f"{p['sym']} (${c:,.2f}, סטופ ${p['stop']:,.2f})")
-        if near:
-            port.append('⚠️ קרובות לסטופ: ' + ', '.join(near))
+        earlier = [c for c in pf.get('closed', []) if monday.isoformat() <= c.get('sold', '') <= friday.isoformat()
+                   and c not in sold]
+        port = portfolio_section(pf, bought, sold, earlier_sold=earlier)
     else:
         port = portfolio_section(pf, [], [], 'נתוני המחירים של שישי חסרים — התיק לא עודכן.')
 
-    # week ahead
+    # week ahead: one line from the site + the next macro print
     nxt = ['🔭 **השבוע הבא**']
-    if narr.get('lookahead'):
-        nxt.append(narr['lookahead'])
-    nxt += econ_section(econ, now)[1:] if isinstance(econ, dict) else []
-    seas = (ahead or {}).get('seasonality') or {}
-    al = seas.get('all') or {}
-    if seas.get('label') and al.get('upPct') is not None and al.get('avg') is not None:
-        nxt.append(f"• עונתיות ({seas['label']}): ה-S&P עלה ב-{al['upPct']}% מהשנים מאז {seas.get('since', '')}, "
-                   f"בממוצע {with_lrm(pct(al['avg']))}")
-    nxt = [l for l in nxt if l != 'היום אין נתון מתוזמן.']
+    if narr.get('nextWeek'):
+        nxt.append(narr['nextWeek'])
+    mac = econ_section(econ, now) if isinstance(econ, dict) else []
+    if mac and '·' in mac[0]:
+        nxt.append('• ' + mac[0].split('·', 1)[1].replace('היום אין · ', '').strip())
 
-    watch = []
-    if narr.get('watch'):
-        watch = ['🎯 **מה לעקוב**'] + [f'{i}. {w}' for i, w in enumerate(narr['watch'][:3], 1)]
-
-    tail = ['הבריף הבא: יום שני ב-9:00.', 'nditzik.github.io/nidam-markets']
-
-    def assemble(with_extra):
-        tot2 = tot + ([f'• {x}' for x in extra] if with_extra else [])
-        secs = [head, fri] + ([wk] if wk else []) + [tot2, port, nxt] + ([watch] if watch else []) + [tail]
-        return '\n\n'.join('\n'.join(x) for x in secs if x)
-
-    message = assemble(True)
-    if len(message) > TELEGRAM_LIMIT:
-        message = assemble(False)
+    secs = [head, mkt, port, nxt, ['nditzik.github.io/nidam-markets']]
+    message = '\n\n'.join('\n'.join(x) for x in secs if x)
     if not fresh:
         message = message.replace(head[0], head[0] + '\n⚠️ סיכום השבוע מהאתר עוד לא עודכן — רק מספרים.', 1)
     return message, pf_changed
